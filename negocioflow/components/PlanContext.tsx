@@ -2,12 +2,14 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 import type { Business, BusinessRole, Subscription } from "../lib/types";
-import { isProSub, daysUntil } from "../lib/plan";
+import { isProSub, isPlusSub, daysUntil } from "../lib/plan";
 
 interface PlanCtx {
   business: Business;
   subscription: Subscription | null;
   isPro: boolean;
+  isPlus: boolean;
+  planLabel: "Free" | "Pro" | "Plus";
   daysLeft: number | null;
   showUpgrade: boolean;
   role: BusinessRole;
@@ -37,15 +39,41 @@ export function PlanProvider({
       .select("*")
       .eq("business_id", business.id)
       .maybeSingle();
-    setSubscription((data as Subscription) || null);
-  }, [business.id]);
+    let sub = (data as Subscription) || null;
+
+    // El plan Plus desbloquea Pro en hasta 5 negocios de la misma cuenta,
+    // aunque la suscripción Plus esté asociada a otro negocio del dueño.
+    // Si este negocio no tiene su propia suscripción Pro/Plus activa,
+    // revisamos si el dueño tiene un Plus activo en algún otro negocio suyo.
+    if (!isProSub(sub)) {
+      const { data: ownerBusinesses } = await supabase
+        .from("businesses")
+        .select("id")
+        .eq("user_id", business.user_id);
+      const ids = (ownerBusinesses || []).map((b: { id: string }) => b.id);
+      if (ids.length > 1) {
+        const { data: plusSubs } = await supabase
+          .from("subscriptions")
+          .select("*")
+          .in("business_id", ids)
+          .like("plan", "plus%")
+          .order("expires_at", { ascending: false, nullsFirst: false });
+        const activePlus = (plusSubs as Subscription[] | null)?.find((s) => isPlusSub(s));
+        if (activePlus) sub = activePlus;
+      }
+    }
+
+    setSubscription(sub);
+  }, [business.id, business.user_id]);
 
   useEffect(() => {
     refreshSubscription();
   }, [refreshSubscription]);
 
   const isPro = isProSub(subscription);
-  const daysLeft = subscription?.plan?.startsWith("pro") ? daysUntil(subscription.expires_at) : null;
+  const isPlus = isPlusSub(subscription);
+  const planLabel: "Free" | "Pro" | "Plus" = isPlus ? "Plus" : isPro ? "Pro" : "Free";
+  const daysLeft = isPro ? daysUntil(subscription?.expires_at) : null;
 
   return (
     <Ctx.Provider
@@ -53,6 +81,8 @@ export function PlanProvider({
         business,
         subscription,
         isPro,
+        isPlus,
+        planLabel,
         daysLeft,
         showUpgrade,
         role,

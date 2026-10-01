@@ -30,8 +30,13 @@ export async function prepareOrder(
 }> {
   const body = await request.json().catch(() => ({}));
   const planId = body.planId as string;
-  if (!planId || (planId !== "pro_monthly" && planId !== "pro_annual")) {
+  const businessId = body.businessId as string | undefined;
+  const VALID_PLANS = ["pro_monthly", "pro_annual", "plus_monthly", "plus_annual"];
+  if (!planId || !VALID_PLANS.includes(planId)) {
     throw new HttpError(400, "planId inválido.");
+  }
+  if (!businessId) {
+    throw new HttpError(400, "Falta el negocio a suscribir.");
   }
 
   const sb = supabaseForRequest(request);
@@ -43,13 +48,17 @@ export async function prepareOrder(
     throw new HttpError(401, "No autenticado.");
   }
 
+  // El usuario puede tener varios negocios (multi-negocio): nos aseguramos de
+  // que el negocio indicado exista y sea del dueño que está pagando, no
+  // simplemente "el negocio del usuario" (eso ya no es único).
   const { data: business, error: bizErr } = await sb
     .from("businesses")
     .select("id")
+    .eq("id", businessId)
     .eq("user_id", user.id)
     .maybeSingle();
   if (bizErr || !business) {
-    throw new HttpError(404, "No se encontró un negocio para este usuario.");
+    throw new HttpError(404, "No se encontró ese negocio para este usuario.");
   }
 
   // El precio SIEMPRE se resuelve server-side desde la tabla plans, nunca se

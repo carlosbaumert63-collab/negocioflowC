@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { BUSINESS_TYPES, PAYMENT_METHODS } from "../lib/types";
+import { friendlyDbError } from "../lib/plan";
 
 export default function Onboarding({
   userId,
@@ -45,7 +46,7 @@ export default function Onboarding({
       .single();
     setSaving(false);
     if (error) {
-      setError("No se pudo guardar: " + error.message);
+      setError(friendlyDbError(error.message));
       return;
     }
     onDone(data.id);

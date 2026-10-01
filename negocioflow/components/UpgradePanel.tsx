@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { fmtCLP } from "../lib/types";
+import { usePlan } from "./PlanContext";
 
 const PRO_FEATURES = [
   "Ventas y productos ilimitados",
@@ -14,12 +15,17 @@ const PRO_FEATURES = [
   "Alertas inteligentes",
 ];
 
+const PLUS_FEATURES = ["Todo lo del plan Pro", "Hasta 5 negocios en tu cuenta", "Se aplica automáticamente a todos ellos"];
+
+type PlanId = "pro_monthly" | "pro_annual" | "plus_monthly" | "plus_annual";
+
 export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
+  const { business } = usePlan();
   const [provider, setProvider] = useState<"flow" | "mp">("flow");
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function checkout(planId: "pro_monthly" | "pro_annual") {
+  async function checkout(planId: PlanId) {
     setError(null);
     setLoadingPlan(planId);
     try {
@@ -34,7 +40,7 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ planId }),
+        body: JSON.stringify({ planId, businessId: business.id }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo iniciar el pago.");
@@ -110,6 +116,47 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
             Elegir anual
           </div>
         </button>
+      </div>
+
+      <div className="mt-6 pt-5 border-t border-line">
+        <div className="text-sm font-semibold mb-2">¿Tienes más de un local? Pasa a Plus</div>
+        <ul className="space-y-1.5 mb-4">
+          {PLUS_FEATURES.map((f) => (
+            <li key={f} className="flex items-center gap-2 text-sm text-muted">
+              <Check size={14} className="text-amber-600 flex-shrink-0" />
+              {f}
+            </li>
+          ))}
+        </ul>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button
+            onClick={() => checkout("plus_monthly")}
+            disabled={loadingPlan !== null}
+            className="border border-line rounded-xl p-4 text-left hover:border-amber-400 transition disabled:opacity-60"
+          >
+            <div className="text-xs text-muted mb-1">Mensual</div>
+            <div className="text-lg font-bold mb-2">{fmtCLP(14990)}</div>
+            <div className="flex items-center justify-center gap-1.5 text-xs font-medium bg-ink text-white rounded-lg py-1.5">
+              {loadingPlan === "plus_monthly" && <Loader2 size={12} className="animate-spin" />}
+              Elegir mensual
+            </div>
+          </button>
+          <button
+            onClick={() => checkout("plus_annual")}
+            disabled={loadingPlan !== null}
+            className="border-2 border-amber-500 rounded-xl p-4 text-left relative hover:bg-amber-50 transition disabled:opacity-60"
+          >
+            <div className="absolute -top-2 right-3 bg-amber-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
+              Ahorra 16%
+            </div>
+            <div className="text-xs text-muted mb-1">Anual</div>
+            <div className="text-lg font-bold mb-2">{fmtCLP(149990)}</div>
+            <div className="flex items-center justify-center gap-1.5 text-xs font-medium bg-amber-600 text-white rounded-lg py-1.5">
+              {loadingPlan === "plus_annual" && <Loader2 size={12} className="animate-spin" />}
+              Elegir anual
+            </div>
+          </button>
+        </div>
       </div>
     </div>
   );

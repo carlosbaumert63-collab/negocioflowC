@@ -108,7 +108,7 @@ function AppShellInner({
   onSwitchBusiness: (id: string) => void;
   onCreateBusiness: () => void;
 }) {
-  const { isPro, isOwner, daysLeft, showUpgrade, goToPlan, closeUpgrade, refreshSubscription } = usePlan();
+  const { isPro, planLabel, isOwner, daysLeft, showUpgrade, goToPlan, closeUpgrade, refreshSubscription } = usePlan();
   const [tab, setTab] = useState<Tab>("dashboard");
   const [showMore, setShowMore] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
@@ -116,6 +116,20 @@ function AppShellInner({
   const mainTabs = isOwner ? MAIN_TABS : MAIN_TABS.filter((t) => !t.ownerOnly);
   const moreTabs = isOwner ? MORE_TABS : MORE_TABS.filter((t) => !t.ownerOnly);
   const allTabs = [...mainTabs, ...moreTabs];
+
+  // Cerrar cualquier panel/modal abierto con la tecla Escape (navegación por teclado).
+  useEffect(() => {
+    if (!showSwitcher && !showMore && !showUpgrade) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowSwitcher(false);
+        setShowMore(false);
+        closeUpgrade();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showSwitcher, showMore, showUpgrade, closeUpgrade]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -169,13 +183,19 @@ function AppShellInner({
         <div className="relative mb-4">
           <button
             onClick={() => setShowSwitcher((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={showSwitcher}
             className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-line text-left hover:bg-surface"
           >
             <span className="text-sm font-medium truncate">{business.name}</span>
             <ChevronDown size={14} className="text-muted flex-shrink-0" />
           </button>
           {showSwitcher && (
-            <div className="absolute left-0 right-0 mt-1 bg-white border border-line rounded-lg shadow-lg z-20 py-1">
+            <div
+              role="menu"
+              aria-label="Seleccionar negocio"
+              className="absolute left-0 right-0 mt-1 bg-white border border-line rounded-lg shadow-lg z-20 py-1"
+            >
               {businesses.map((b) => (
                 <button
                   key={b.id}
@@ -212,7 +232,7 @@ function AppShellInner({
             }`}
           >
             <Crown size={14} />
-            {isPro ? "Plan Pro" : "Plan Free — mejorar"}
+            {isPro ? `Plan ${planLabel}` : "Plan Free — mejorar"}
           </button>
         )}
         {!isOwner && (
@@ -222,7 +242,7 @@ function AppShellInner({
             }`}
           >
             <UserCog size={14} />
-            Vendedor{isPro ? " · Plan Pro" : ""}
+            Vendedor{isPro ? ` · Plan ${planLabel}` : ""}
           </div>
         )}
 
@@ -283,7 +303,7 @@ function AppShellInner({
                   isPro ? "bg-brand-50 text-brand-700" : "bg-amber-50 text-amber-700"
                 }`}
               >
-                {isPro ? "Pro" : "Free"}
+                {planLabel}
               </button>
             )}
             <button onClick={() => supabase.auth.signOut()} className="text-muted">
@@ -303,6 +323,8 @@ function AppShellInner({
               exit={{ opacity: 0 }}
             >
               <motion.div
+                role="menu"
+                aria-label="Seleccionar negocio"
                 className="bg-white rounded-xl w-full max-w-sm overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
                 initial={{ y: -10, opacity: 0 }}
@@ -411,6 +433,9 @@ function AppShellInner({
             transition={{ duration: 0.18 }}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Más secciones"
               className="bg-white rounded-t-2xl w-full p-4 pb-8"
               onClick={(e) => e.stopPropagation()}
               initial={{ y: "100%" }}
@@ -420,7 +445,7 @@ function AppShellInner({
             >
               <div className="flex items-center justify-between mb-3">
                 <div className="font-bold text-sm">Más secciones</div>
-                <button onClick={() => setShowMore(false)}>
+                <button onClick={() => setShowMore(false)} aria-label="Cerrar">
                   <X size={18} className="text-muted" />
                 </button>
               </div>
@@ -452,13 +477,18 @@ function AppShellInner({
         {showUpgrade && (
           <motion.div
             className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={closeUpgrade}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Planes NegocioFlow"
               className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg p-5 max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
               initial={{ y: 24, opacity: 0, scale: 0.98 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 24, opacity: 0, scale: 0.98 }}
@@ -466,7 +496,7 @@ function AppShellInner({
             >
               <div className="flex items-center justify-between mb-4">
                 <div className="font-bold text-lg">NegocioFlow Pro</div>
-                <button onClick={closeUpgrade}>
+                <button onClick={closeUpgrade} aria-label="Cerrar">
                   <X size={18} className="text-muted" />
                 </button>
               </div>

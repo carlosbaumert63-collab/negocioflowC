@@ -313,8 +313,22 @@ export default function Landing({
         </div>
       </div>
 
-      <div className="text-center text-xs text-muted py-8 border-t border-line">
-        NegocioFlow — Hecho para pequeños negocios en Chile.
+      <div className="text-center text-xs text-muted py-8 border-t border-line space-y-2">
+        <div>NegocioFlow — Hecho para pequeños negocios en Chile.</div>
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <a href="/terminos" className="hover:text-ink">
+            Términos de servicio
+          </a>
+          <span>·</span>
+          <a href="/privacidad" className="hover:text-ink">
+            Política de privacidad
+          </a>
+          <span>·</span>
+          <a href="mailto:[COMPLETAR@correo.cl]" className="hover:text-ink">
+            [COMPLETAR: correo de soporte]
+          </a>
+        </div>
+        <div className="text-[11px] text-muted/80">[COMPLETAR: nombre legal / RUT y dirección del responsable]</div>
       </div>
     </div>
   );

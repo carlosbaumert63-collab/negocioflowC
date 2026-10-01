@@ -8,6 +8,7 @@ export default function AuthScreen({ onBack }: { onBack?: () => void }) {
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
@@ -16,6 +17,10 @@ export default function AuthScreen({ onBack }: { onBack?: () => void }) {
     setError("");
     setInfo("");
     if (!email || (mode !== "forgot" && !password)) return;
+    if (mode === "signup" && !acceptedTerms) {
+      setError("Debes aceptar los Términos de servicio y la Política de privacidad para crear tu cuenta.");
+      return;
+    }
     setLoading(true);
 
     if (mode === "login") {
@@ -77,12 +82,34 @@ export default function AuthScreen({ onBack }: { onBack?: () => void }) {
           </>
         )}
 
+        {mode === "signup" && (
+          <label className="flex items-start gap-2 mb-4 text-xs text-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={acceptedTerms}
+              onChange={(e) => setAcceptedTerms(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              Acepto los{" "}
+              <a href="/terminos" target="_blank" className="text-brand-700 font-medium">
+                Términos de servicio
+              </a>{" "}
+              y la{" "}
+              <a href="/privacidad" target="_blank" className="text-brand-700 font-medium">
+                Política de privacidad
+              </a>
+              .
+            </span>
+          </label>
+        )}
+
         {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
         {info && <div className="text-sm text-brand-700 mb-3">{info}</div>}
 
         <button
           onClick={handleSubmit}
-          disabled={loading}
+          disabled={loading || (mode === "signup" && !acceptedTerms)}
           className="w-full py-2.5 rounded-lg bg-brand-500 text-white font-semibold text-sm hover:bg-brand-600 transition disabled:opacity-60"
         >
           {loading
