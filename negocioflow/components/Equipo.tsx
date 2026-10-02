@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { UserPlus, Trash2, Users } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import type { Business, BusinessMember } from "../lib/types";
+import { friendlyDbError } from "../lib/plan";
 import OwnerGate from "./OwnerGate";
 
 function EquipoInner({ business }: { business: Business }) {
@@ -30,7 +31,13 @@ function EquipoInner({ business }: { business: Business }) {
   }, [business.id]);
 
   async function invite() {
-    if (!email.trim()) return setError("Ingresa un correo.");
+    if (inviting) return;
+    const clean = email.trim().toLowerCase();
+    if (!clean) return setError("Ingresa un correo.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean)) return setError("Ese correo no parece válido.");
+    if (members.some((m) => (m.member_email || "").toLowerCase() === clean)) {
+      return setError("Esa persona ya está en tu equipo.");
+    }
     setInviting(true);
     setError("");
     setMessage("");
@@ -44,26 +51,37 @@ function EquipoInner({ business }: { business: Business }) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token || ""}`,
         },
-        body: JSON.stringify({ businessId: business.id, email: email.trim() }),
+        body: JSON.stringify({ businessId: business.id, email: clean }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || "No se pudo invitar.");
       } else {
-        setMessage(`Se invitó a ${email.trim()}. Le llegará un correo para crear su clave de acceso.`);
+        setMessage(
+          data.alreadyHadAccount
+            ? `Listo: ${clean} ya tenía cuenta en NegocioFlow. La próxima vez que entre verá ${business.name} en su selector de negocios.`
+            : `Se invitó a ${clean}. Le llegará un correo para crear su clave de acceso (revisa también la carpeta de spam).`
+        );
         setEmail("");
         load();
       }
     } catch (err: any) {
-      setError(err.message || "Error inesperado.");
+      setError(friendlyDbError(err.message));
     } finally {
       setInviting(false);
     }
   }
 
-  async function removeMember(userId: string) {
-    if (!confirm("¿Quitar a esta persona del equipo?")) return;
-    await supabase.from("business_members").delete().eq("business_id", business.id).eq("user_id", userId);
+  async function removeMember(m: BusinessMember) {
+    if (!confirm(`¿Quitar a ${m.member_email || "esta persona"} del equipo? Dejará de ver este negocio.`)) return;
+    setError("");
+    setMessage("");
+    const { error: err } = await supabase
+      .from("business_members")
+      .delete()
+      .eq("business_id", business.id)
+      .eq("user_id", m.user_id);
+    if (err) return setError(friendlyDbError(err.message));
     load();
   }
 
@@ -84,7 +102,9 @@ function EquipoInner({ business }: { business: Business }) {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && invite()}
             placeholder="correo@ejemplo.com"
+            aria-label="Correo de la persona a invitar"
             className="flex-1 px-3 py-2 border border-line rounded-lg text-sm"
           />
           <button
@@ -119,7 +139,11 @@ function EquipoInner({ business }: { business: Business }) {
                 <div className="text-sm font-medium">{m.member_email || m.user_id}</div>
                 <div className="text-xs text-muted capitalize">{m.role}</div>
               </div>
-              <button onClick={() => removeMember(m.user_id)} className="text-muted hover:text-red-600">
+              <button
+                onClick={() => removeMember(m)}
+                className="text-muted hover:text-red-600"
+                aria-label={`Quitar a ${m.member_email || "esta persona"} del equipo`}
+              >
                 <Trash2 size={15} />
               </button>
             </div>

@@ -5,16 +5,22 @@ import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, EXPENSE_CATEGORIES, PAYMENT_METHODS, type Business, type Expense } from "../lib/types";
 import { localISODate, formatDateCL } from "../lib/dates";
 import { friendlyDbError } from "../lib/plan";
+import { parseCLP } from "../lib/numbers";
 import OwnerGate from "./OwnerGate";
 
-const EMPTY_FORM = {
-  description: "",
-  category: EXPENSE_CATEGORIES[0],
-  amount: "",
-  expense_date: localISODate(),
-  payment_method: PAYMENT_METHODS[0],
-  note: "",
-};
+// Función (no constante): la fecha por defecto debe ser HOY al abrir el
+// formulario, no el día en que se cargó la app (si quedó abierta de un día
+// para otro, se guardaban gastos con la fecha de ayer).
+function emptyForm() {
+  return {
+    description: "",
+    category: EXPENSE_CATEGORIES[0],
+    amount: "",
+    expense_date: localISODate(),
+    payment_method: PAYMENT_METHODS[0],
+    note: "",
+  };
+}
 
 function GastosInner({ business }: { business: Business }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -23,14 +29,19 @@ function GastosInner({ business }: { business: Business }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [listError, setListError] = useState("");
 
   const load = async () => {
-    const { data } = await supabase
+    const { data, error: err } = await supabase
       .from("expenses")
       .select("*")
       .eq("business_id", business.id)
-      .order("expense_date", { ascending: false });
+      .order("expense_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1000);
+    if (err) setListError(friendlyDbError(err.message));
     setExpenses((data as Expense[]) || []);
     setLoading(false);
   };
@@ -53,7 +64,7 @@ function GastosInner({ business }: { business: Business }) {
 
   function openNew() {
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    setForm(emptyForm());
     setError("");
     setShowForm(true);
   }
@@ -63,7 +74,7 @@ function GastosInner({ business }: { business: Business }) {
     setForm({
       description: e.description,
       category: e.category,
-      amount: String(e.amount),
+      amount: String(Math.round(Number(e.amount))),
       expense_date: e.expense_date,
       payment_method: e.payment_method,
       note: e.note || "",
@@ -73,10 +84,12 @@ function GastosInner({ business }: { business: Business }) {
   }
 
   const saveExpense = async () => {
+    if (saving) return;
     setError("");
     if (!form.description.trim()) return setError("Ingresa una descripción.");
-    const amount = Number(form.amount);
-    if (!Number.isFinite(amount) || amount <= 0) return setError("Ingresa un monto válido.");
+    const amount = parseCLP(form.amount);
+    if (amount === null || amount <= 0) return setError("Ingresa un monto válido (por ejemplo 25.000).");
+    if (!form.expense_date) return setError("Ingresa la fecha del gasto.");
 
     const payload = {
       business_id: business.id,
@@ -88,13 +101,15 @@ function GastosInner({ business }: { business: Business }) {
       note: form.note.trim() || null,
     };
 
+    setSaving(true);
     const { error: err } = editingId
       ? await supabase.from("expenses").update(payload).eq("id", editingId)
       : await supabase.from("expenses").insert(payload);
+    setSaving(false);
 
     if (err) return setError(friendlyDbError(err.message));
 
-    setForm(EMPTY_FORM);
+    setForm(emptyForm());
     setEditingId(null);
     setShowForm(false);
     load();
@@ -102,8 +117,10 @@ function GastosInner({ business }: { business: Business }) {
 
   const removeExpense = async (id: string) => {
     if (!confirm("¿Eliminar este gasto?")) return;
+    setListError("");
+    const { error: err } = await supabase.from("expenses").delete().eq("id", id);
+    if (err) return setListError(friendlyDbError(err.message));
     setExpenses((prev) => prev.filter((e) => e.id !== id));
-    await supabase.from("expenses").delete().eq("id", id);
   };
 
   const total = filtered.reduce((s, e) => s + Number(e.amount), 0);
@@ -135,10 +152,10 @@ function GastosInner({ business }: { business: Business }) {
               </select>
             </FormField>
             <FormField label="Monto">
-              <input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={inputCls} />
+              <input inputMode="numeric" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="Ej. 25.000" className={inputCls} />
             </FormField>
             <FormField label="Fecha">
-              <input type="date" value={form.expense_date} onChange={(e) => setForm({ ...form, expense_date: e.target.value })} className={inputCls} />
+              <input type="date" value={form.expense_date} max={localISODate()} onChange={(e) => setForm({ ...form, expense_date: e.target.value })} className={inputCls} />
             </FormField>
             <FormField label="Método de pago">
               <select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })} className={inputCls}>
@@ -151,9 +168,13 @@ function GastosInner({ business }: { business: Business }) {
               <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className={inputCls} />
             </FormField>
           </div>
-          {error && <div className="text-sm text-red-600 mt-3">{error}</div>}
-          <button onClick={saveExpense} className="mt-4 bg-brand-500 text-white text-sm font-semibold px-5 py-2 rounded-lg">
-            {editingId ? "Guardar cambios" : "Guardar gasto"}
+          {error && <div role="alert" className="text-sm text-red-600 mt-3">{error}</div>}
+          <button
+            onClick={saveExpense}
+            disabled={saving}
+            className="mt-4 bg-brand-500 text-white text-sm font-semibold px-5 py-2 rounded-lg disabled:opacity-60"
+          >
+            {saving ? "Guardando…" : editingId ? "Guardar cambios" : "Guardar gasto"}
           </button>
         </div>
       )}
@@ -170,6 +191,8 @@ function GastosInner({ business }: { business: Business }) {
         </div>
       )}
 
+      {listError && <div role="alert" className="text-sm text-red-600 mb-3">{listError}</div>}
+
       {loading ? (
         <div className="text-sm text-muted py-8 text-center">Cargando…</div>
       ) : filtered.length === 0 ? (
@@ -179,7 +202,7 @@ function GastosInner({ business }: { business: Business }) {
       ) : (
         <>
           <div className="text-sm text-muted mb-3">
-            Total: <strong className="text-ink">{fmtCLP(total)}</strong>
+            {query ? "Total de los resultados" : "Total"}: <strong className="text-ink">{fmtCLP(total)}</strong>
           </div>
           <div className="bg-white border border-line rounded-xl overflow-hidden">
             {filtered.map((e) => (
@@ -195,10 +218,10 @@ function GastosInner({ business }: { business: Business }) {
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <div className="text-sm font-semibold">{fmtCLP(e.amount)}</div>
-                  <button onClick={() => openEdit(e)} className="text-muted hover:text-ink">
+                  <button onClick={() => openEdit(e)} className="text-muted hover:text-ink" aria-label="Editar gasto">
                     <Pencil size={15} />
                   </button>
-                  <button onClick={() => removeExpense(e.id)} className="text-muted hover:text-red-600">
+                  <button onClick={() => removeExpense(e.id)} className="text-muted hover:text-red-600" aria-label="Eliminar gasto">
                     <Trash2 size={16} />
                   </button>
                 </div>
@@ -214,11 +237,15 @@ function GastosInner({ business }: { business: Business }) {
 const inputCls =
   "w-full px-3 py-2 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500";
 
-function FormField({ label, children }: { label: string; children: React.ReactNode }) {
+// Asocia la etiqueta al campo (lectores de pantalla y clic en la etiqueta).
+function FormField({ label, children }: { label: string; children: React.ReactElement }) {
+  const id = "gasto-" + label.toLowerCase().replace(/[^a-z]+/g, "-");
   return (
     <div>
-      <label className="text-xs text-muted">{label}</label>
-      <div className="mt-1">{children}</div>
+      <label className="text-xs text-muted" htmlFor={id}>
+        {label}
+      </label>
+      <div className="mt-1">{React.cloneElement(children, { id })}</div>
     </div>
   );
 }

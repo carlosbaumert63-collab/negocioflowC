@@ -1,5 +1,5 @@
 "use client";
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
 import type { Business, BusinessRole, Subscription } from "../lib/types";
 import { isProSub, isPlusSub, daysUntil } from "../lib/plan";
@@ -32,39 +32,34 @@ export function PlanProvider({
 }) {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const requestSeq = useRef(0);
 
   const refreshSubscription = useCallback(async () => {
-    const { data } = await supabase
-      .from("subscriptions")
-      .select("*")
-      .eq("business_id", business.id)
-      .maybeSingle();
-    let sub = (data as Subscription) || null;
+    const seq = ++requestSeq.current;
 
-    // El plan Plus desbloquea Pro en hasta 5 negocios de la misma cuenta,
-    // aunque la suscripción Plus esté asociada a otro negocio del dueño.
-    // Si este negocio no tiene su propia suscripción Pro/Plus activa,
-    // revisamos si el dueño tiene un Plus activo en algún otro negocio suyo.
-    if (!isProSub(sub)) {
-      const { data: ownerBusinesses } = await supabase
-        .from("businesses")
-        .select("id")
-        .eq("user_id", business.user_id);
-      const ids = (ownerBusinesses || []).map((b: { id: string }) => b.id);
-      if (ids.length > 1) {
-        const { data: plusSubs } = await supabase
-          .from("subscriptions")
-          .select("*")
-          .in("business_id", ids)
-          .like("plan", "plus%")
-          .order("expires_at", { ascending: false, nullsFirst: false });
-        const activePlus = (plusSubs as Subscription[] | null)?.find((s) => isPlusSub(s));
-        if (activePlus) sub = activePlus;
-      }
+    // La base de datos resuelve el plan efectivo del negocio: su propia
+    // suscripción, o un Plus activo del dueño en otro de sus negocios. Se hace
+    // en el servidor porque un vendedor no tiene permiso para ver los otros
+    // negocios del dueño, y sin esto vería "Free" en un negocio que es Pro.
+    let sub: Subscription | null = null;
+    const { data: rpcData, error: rpcError } = await supabase.rpc("effective_subscription", {
+      p_business_id: business.id,
+    });
+    if (!rpcError) {
+      const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+      sub = row ? ({ flow_customer_id: null, updated_at: "", ...row } as Subscription) : null;
+    } else {
+      // Respaldo: solo la suscripción propia del negocio.
+      const { data } = await supabase.from("subscriptions").select("*").eq("business_id", business.id).maybeSingle();
+      sub = (data as Subscription) || null;
     }
 
+    // Si mientras tanto se pidió una actualización más nueva, no la pisamos.
+    if (seq !== requestSeq.current) return;
     setSubscription(sub);
-  }, [business.id, business.user_id]);
+    setLoaded(true);
+  }, [business.id]);
 
   useEffect(() => {
     refreshSubscription();
@@ -74,6 +69,12 @@ export function PlanProvider({
   const isPlus = isPlusSub(subscription);
   const planLabel: "Free" | "Pro" | "Plus" = isPlus ? "Plus" : isPro ? "Pro" : "Free";
   const daysLeft = isPro ? daysUntil(subscription?.expires_at) : null;
+
+  // Hasta saber el plan no mostramos nada: si no, un usuario Pro vería por
+  // un instante la versión Free (avisos de límite, botones de pago).
+  if (!loaded) {
+    return <div className="min-h-screen flex items-center justify-center text-sm text-muted">Cargando…</div>;
+  }
 
   return (
     <Ctx.Provider

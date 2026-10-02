@@ -16,27 +16,44 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const saleId = body.saleId as string | undefined;
-    if (!saleId) return NextResponse.json({ error: "Falta saleId." }, { status: 400 });
+    const businessId = body.businessId as string | undefined;
+    if (!saleId || !businessId) return NextResponse.json({ error: "Falta la venta o el negocio." }, { status: 400 });
 
     const sb = supabaseForRequest(request);
     const {
       data: { user },
     } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "No autenticado." }, { status: 401 });
+    if (!user) return NextResponse.json({ error: "Tu sesión expiró. Vuelve a iniciar sesión." }, { status: 401 });
 
-    const { data: business } = await sb.from("businesses").select("*").eq("user_id", user.id).maybeSingle();
-    if (!business) return NextResponse.json({ error: "Negocio no encontrado." }, { status: 404 });
+    // El usuario puede tener varios negocios: usamos el indicado y verificamos
+    // que sea suyo (la boleta sale con el RUT de ESE negocio).
+    const { data: business } = await sb
+      .from("businesses")
+      .select("*")
+      .eq("id", businessId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!business) {
+      return NextResponse.json({ error: "Solo el dueño del negocio puede emitir boletas." }, { status: 403 });
+    }
 
-    const { data: sale } = await sb.from("sales").select("id, total").eq("id", saleId).maybeSingle();
-    if (!sale) return NextResponse.json({ error: "Venta no encontrada." }, { status: 404 });
+    const { data: sale } = await sb
+      .from("sales")
+      .select("id, total")
+      .eq("id", saleId)
+      .eq("business_id", business.id)
+      .maybeSingle();
+    if (!sale) return NextResponse.json({ error: "Venta no encontrada en este negocio." }, { status: 404 });
 
-    // Se deja un registro "pending" siempre, sea cual sea el resultado, así
-    // queda historial de los intentos de emisión (y de por qué fallaron).
-    const { data: doc } = await sb
+    const { data: issued } = await sb
       .from("dte_documents")
-      .insert({ business_id: business.id, sale_id: sale.id, tipo_dte: 39, status: "pending" })
-      .select()
-      .single();
+      .select("id, folio")
+      .eq("sale_id", sale.id)
+      .eq("status", "issued")
+      .maybeSingle();
+    if (issued) {
+      return NextResponse.json({ error: `Esta venta ya tiene una boleta emitida (folio ${issued.folio ?? "—"}).` }, { status: 409 });
+    }
 
     try {
       const result = await emitDte({
@@ -45,20 +62,34 @@ export async function POST(request: Request) {
         tipoDte: 39,
         amount: Number(sale.total),
       });
-      if (doc) {
-        await sb
-          .from("dte_documents")
-          .update({ status: "issued", folio: result.folio, xml_url: result.xmlUrl, pdf_url: result.pdfUrl })
-          .eq("id", doc.id);
+      // Solo se registra el documento cuando el SII lo aceptó.
+      const { error: docErr } = await sb.from("dte_documents").insert({
+        business_id: business.id,
+        sale_id: sale.id,
+        tipo_dte: 39,
+        status: "issued",
+        folio: result.folio,
+        xml_url: result.xmlUrl,
+        pdf_url: result.pdfUrl,
+      });
+      if (docErr) {
+        // La boleta YA fue aceptada por el SII: no se debe reintentar la emisión.
+        console.error("dte emit: boleta emitida pero no registrada", { saleId: sale.id, folio: result.folio, docErr });
+        return NextResponse.json(
+          {
+            ok: true,
+            ...result,
+            warning: `Boleta emitida (folio ${result.folio}), pero no se pudo guardar en el historial. No la vuelvas a emitir; anota el folio.`,
+          },
+          { status: 200 }
+        );
       }
       return NextResponse.json({ ok: true, ...result });
     } catch (dteErr: any) {
-      if (doc) {
-        await sb.from("dte_documents").update({ status: "failed", error_message: dteErr.message }).eq("id", doc.id);
-      }
       return NextResponse.json({ error: dteErr.message }, { status: 422 });
     }
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Error inesperado." }, { status: 500 });
+    console.error("dte emit error", err);
+    return NextResponse.json({ error: "Error inesperado. Intenta de nuevo." }, { status: 500 });
   }
 }

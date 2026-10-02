@@ -108,6 +108,17 @@ const PLANS = [
       "Alertas inteligentes",
     ],
   },
+  {
+    name: "Plus",
+    price: "$14.990",
+    period: "/mes",
+    note: "o $149.990 / año (ahorra 16%)",
+    features: [
+      "Todo lo del plan Pro",
+      "Hasta 5 negocios en tu cuenta",
+      "Se aplica automáticamente a todos ellos",
+    ],
+  },
 ];
 
 export default function Landing({
@@ -251,9 +262,9 @@ export default function Landing({
       </div>
 
       {/* pricing */}
-      <div className="max-w-4xl mx-auto px-6 pb-16">
+      <div className="max-w-5xl mx-auto px-6 pb-16">
         <h2 className="text-2xl font-bold text-center mb-8">Planes</h2>
-        <div className="grid sm:grid-cols-2 gap-6">
+        <div className="grid sm:grid-cols-3 gap-6">
           {PLANS.map((p) => (
             <div
               key={p.name}
@@ -324,11 +335,11 @@ export default function Landing({
             Política de privacidad
           </a>
           <span>·</span>
-          <a href="mailto:[COMPLETAR@correo.cl]" className="hover:text-ink">
-            [COMPLETAR: correo de soporte]
+          <a href="mailto:carlosbaumert63@gmail.com" className="hover:text-ink">
+            carlosbaumert63@gmail.com
           </a>
         </div>
-        <div className="text-[11px] text-muted/80">[COMPLETAR: nombre legal / RUT y dirección del responsable]</div>
+        <div className="text-[11px] text-muted/80">[COMPLETAR: nombre completo y RUT del responsable] · Temuco, Chile</div>
       </div>
     </div>
   );

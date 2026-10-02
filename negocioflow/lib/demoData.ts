@@ -34,22 +34,33 @@ export async function seedDemoData(businessId: string): Promise<{ error?: string
     .select();
   if (prodErr) return { error: prodErr.message };
 
-  // 2) Ventas demo, repartidas en los últimos 30 días
+  // 2) Ventas demo, repartidas en los últimos 30 días. Las cantidades
+  // respetan el stock disponible para que ningún producto quede negativo.
+  const stockLeft = new Map<string, number>((products || []).map((p: any) => [p.id, Number(p.stock)]));
   for (let i = 0; i < 18; i++) {
     const date = daysAgo(randInt(0, 29));
     const itemCount = randInt(1, 3);
-    const chosen = Array.from({ length: itemCount }, () => products![randInt(0, products!.length - 1)]);
+    const chosen = new Map<string, any>();
+    for (let k = 0; k < itemCount; k++) {
+      const p = products![randInt(0, products!.length - 1)];
+      chosen.set(p.id, p);
+    }
 
-    const items = chosen.map((p) => {
-      const quantity = randInt(1, 4);
-      return {
-        product_id: p.id,
-        product_name: p.name,
-        quantity,
-        unit_price: Number(p.sale_price),
-        unit_cost: Number(p.cost),
-      };
-    });
+    const items = Array.from(chosen.values())
+      .map((p) => {
+        const available = stockLeft.get(p.id) || 0;
+        const quantity = Math.min(randInt(1, 3), available);
+        return {
+          product_id: p.id,
+          product_name: p.name,
+          quantity,
+          unit_price: Number(p.sale_price),
+          unit_cost: Number(p.cost),
+        };
+      })
+      .filter((it) => it.quantity > 0);
+    if (items.length === 0) continue;
+
     const subtotal = items.reduce((s, it) => s + it.unit_price * it.quantity, 0);
     const costTotal = items.reduce((s, it) => s + it.unit_cost * it.quantity, 0);
     const discount = Math.random() < 0.2 ? Math.round(subtotal * 0.05) : 0;
@@ -73,7 +84,13 @@ export async function seedDemoData(businessId: string): Promise<{ error?: string
       .single();
     if (saleErr || !sale) continue;
 
-    await supabase.from("sale_items").insert(items.map((it) => ({ ...it, sale_id: sale.id })));
+    const { error: itemsErr } = await supabase.from("sale_items").insert(items.map((it) => ({ ...it, sale_id: sale.id })));
+    if (itemsErr) {
+      // No dejar una venta demo sin productos.
+      await supabase.from("sales").delete().eq("id", sale.id);
+      continue;
+    }
+    items.forEach((it) => stockLeft.set(it.product_id, (stockLeft.get(it.product_id) || 0) - it.quantity));
   }
 
   // 3) Gastos demo

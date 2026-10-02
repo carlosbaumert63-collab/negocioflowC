@@ -7,6 +7,7 @@ import { formatDateCL, localISODate } from "../lib/dates";
 import ProGate from "./ProGate";
 import OwnerGate from "./OwnerGate";
 import { friendlyDbError } from "../lib/plan";
+import { useEscape } from "../lib/useEscape";
 
 interface PurchaseRow {
   id: string;
@@ -24,14 +25,18 @@ function ComprasInner({ business }: { business: Business }) {
 
   async function load() {
     setLoading(true);
-    const [{ data: purch }, { data: suppliers }, { data: items }] = await Promise.all([
-      supabase.from("purchases").select("*").eq("business_id", business.id).order("purchase_date", { ascending: false }),
+    // El conteo de ítems viene embebido por compra (sin traer todos los ítems).
+    const [{ data: purch }, { data: suppliers }] = await Promise.all([
+      supabase
+        .from("purchases")
+        .select("*, purchase_items(count)")
+        .eq("business_id", business.id)
+        .order("purchase_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(300),
       supabase.from("suppliers").select("id, name").eq("business_id", business.id),
-      supabase.from("purchase_items").select("purchase_id"),
     ]);
     const supplierMap = new Map((suppliers || []).map((s: any) => [s.id, s.name]));
-    const itemCounts = new Map<string, number>();
-    (items || []).forEach((i: any) => itemCounts.set(i.purchase_id, (itemCounts.get(i.purchase_id) || 0) + 1));
 
     setPurchases(
       (purch || []).map((p: any) => ({
@@ -40,7 +45,7 @@ function ComprasInner({ business }: { business: Business }) {
         total: Number(p.total),
         supplier_id: p.supplier_id,
         supplierName: p.supplier_id ? supplierMap.get(p.supplier_id) || "—" : "Sin proveedor",
-        itemCount: itemCounts.get(p.id) || 0,
+        itemCount: Number(p.purchase_items?.[0]?.count || 0),
       }))
     );
     setLoading(false);
@@ -130,6 +135,7 @@ function NuevaCompraModal({
   const [items, setItems] = useState<ItemRow[]>([{ product_id: "", quantity: "1", unit_cost: "0" }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEscape(onClose, !saving);
 
   useEffect(() => {
     supabase
@@ -158,65 +164,66 @@ function NuevaCompraModal({
     setItems((prev) => prev.filter((_, idx) => idx !== i));
   }
 
-  const total = items.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0);
+  // El total se calcula solo con las filas que realmente se van a guardar.
+  const validItems = items.filter((it) => it.product_id && Number(it.quantity) > 0);
+  const total = Math.round(
+    validItems.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
+  );
+  const ignoredRows = items.length - validItems.length;
 
   async function handleSave() {
-    const validItems = items.filter((it) => it.product_id && Number(it.quantity) > 0);
+    if (saving) return;
     if (validItems.length === 0) {
       setError("Agrega al menos un producto con cantidad válida.");
       return;
     }
-    setSaving(true);
-    setError(null);
-
-    const { data: purchase, error: pErr } = await supabase
-      .from("purchases")
-      .insert({
-        business_id: business.id,
-        supplier_id: supplierId || null,
-        purchase_date: date,
-        total,
-      })
-      .select()
-      .single();
-
-    if (pErr || !purchase) {
-      setSaving(false);
-      setError(friendlyDbError(pErr?.message));
+    if (validItems.some((it) => !Number.isFinite(Number(it.unit_cost)) || Number(it.unit_cost) < 0)) {
+      setError("Hay un costo inválido (no puede ser negativo).");
       return;
     }
-
-    const { error: itemsErr } = await supabase.from("purchase_items").insert(
-      validItems.map((it) => ({
-        purchase_id: purchase.id,
+    setSaving(true);
+    setError(null);
+    // Cabecera + ítems en una sola transacción: si algo falla, no queda una
+    // compra a medias ni stock sumado sin su compra.
+    const { error: rpcErr } = await supabase.rpc("save_purchase", {
+      p_business_id: business.id,
+      p_supplier_id: supplierId || null,
+      p_purchase_date: date,
+      p_items: validItems.map((it) => ({
         product_id: it.product_id,
         quantity: Number(it.quantity),
-        unit_cost: Number(it.unit_cost),
-      }))
-    );
-
+        unit_cost: Math.round(Number(it.unit_cost) || 0),
+      })),
+    });
     setSaving(false);
-    if (itemsErr) {
-      setError(friendlyDbError(itemsErr.message));
+    if (rpcErr) {
+      setError(friendlyDbError(rpcErr.message));
       return;
     }
     onSaved();
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg p-5 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={() => !saving && onClose()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Nueva compra"
+        className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg p-5 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-4">
           <div className="font-bold">Nueva compra</div>
-          <button onClick={onClose}>
+          <button onClick={onClose} aria-label="Cerrar">
             <X size={18} className="text-muted" />
           </button>
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div>
-            <label className="block text-xs font-medium text-muted mb-1">Proveedor</label>
+            <label className="block text-xs font-medium text-muted mb-1" htmlFor="compra-prov">Proveedor</label>
             <select
+              id="compra-prov"
               value={supplierId}
               onChange={(e) => setSupplierId(e.target.value)}
               className="w-full border border-line rounded-lg px-3 py-2 text-sm"
@@ -230,10 +237,12 @@ function NuevaCompraModal({
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted mb-1">Fecha</label>
+            <label className="block text-xs font-medium text-muted mb-1" htmlFor="compra-fecha">Fecha</label>
             <input
+              id="compra-fecha"
               type="date"
               value={date}
+              max={localISODate()}
               onChange={(e) => setDate(e.target.value)}
               className="w-full border border-line rounded-lg px-3 py-2 text-sm"
             />
@@ -250,6 +259,7 @@ function NuevaCompraModal({
                   updateItem(i, { product_id: e.target.value, unit_cost: p ? String(p.cost) : it.unit_cost });
                 }}
                 className="flex-1 border border-line rounded-lg px-2 py-2 text-sm min-w-0"
+                aria-label="Producto"
               >
                 <option value="">Producto…</option>
                 {products.map((p) => (
@@ -262,6 +272,7 @@ function NuevaCompraModal({
                 type="number"
                 min={1}
                 value={it.quantity}
+                aria-label="Cantidad"
                 onChange={(e) => updateItem(i, { quantity: e.target.value })}
                 className="w-16 border border-line rounded-lg px-2 py-2 text-sm"
                 placeholder="Cant."
@@ -269,12 +280,14 @@ function NuevaCompraModal({
               <input
                 type="number"
                 min={0}
+                inputMode="numeric"
+                aria-label="Costo unitario"
                 value={it.unit_cost}
                 onChange={(e) => updateItem(i, { unit_cost: e.target.value })}
                 className="w-24 border border-line rounded-lg px-2 py-2 text-sm"
                 placeholder="Costo u."
               />
-              <button onClick={() => removeItem(i)} className="text-muted hover:text-red-600 flex-shrink-0">
+              <button onClick={() => removeItem(i)} className="text-muted hover:text-red-600 flex-shrink-0" aria-label="Quitar fila">
                 <Trash2 size={16} />
               </button>
             </div>
@@ -288,15 +301,20 @@ function NuevaCompraModal({
           <span className="text-sm text-muted">Total</span>
           <span className="text-lg font-bold">{fmtCLP(total)}</span>
         </div>
+        {ignoredRows > 0 && (
+          <div className="text-xs text-muted mb-3">
+            {ignoredRows} fila(s) sin producto o sin cantidad no se guardarán.
+          </div>
+        )}
 
-        {error && <div className="text-xs text-red-600 mb-3">{error}</div>}
+        {error && <div role="alert" className="text-xs text-red-600 mb-3">{error}</div>}
 
         <button
           onClick={handleSave}
           disabled={saving}
           className="w-full bg-ink text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-60"
         >
-          Registrar compra
+          {saving ? "Guardando…" : "Registrar compra"}
         </button>
       </div>
     </div>

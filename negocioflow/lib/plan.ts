@@ -41,14 +41,22 @@ export function isPlanLimitError(message: string | null | undefined): boolean {
   return /^(LIMIT_SALES|LIMIT_PRODUCTS|LIMIT_BUSINESSES|PRO_REQUIRED):/.test(message);
 }
 
+// Los mensajes que levanta la base de datos tienen la forma "CODIGO: texto
+// para el usuario" (p. ej. "INVALID_SALE: Hay una cantidad inválida.").
 export function friendlyDbError(message: string | null | undefined): string {
   if (!message) return "Ocurrió un error inesperado.";
-  const match = message.match(/^(LIMIT_SALES|LIMIT_PRODUCTS|LIMIT_BUSINESSES|PRO_REQUIRED):\s*(.*)$/);
+  const match = message.match(/^([A-Z][A-Z_]+):\s*([\s\S]*)$/);
   if (match) {
     return match[2]?.trim() || DB_ERROR_LABELS[match[1]] || message;
   }
   if (/row-level security/i.test(message)) {
     return "No tienes permiso para hacer esto. Si eres vendedor, esta acción es solo para el dueño del negocio.";
+  }
+  if (/failed to fetch|network|load failed/i.test(message)) {
+    return "No hay conexión a internet. Revisa tu conexión e intenta de nuevo.";
+  }
+  if (/foreign key/i.test(message)) {
+    return "No se puede eliminar porque tiene registros asociados.";
   }
   return message;
 }

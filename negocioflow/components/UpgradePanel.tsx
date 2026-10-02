@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { fmtCLP } from "../lib/types";
@@ -19,11 +19,48 @@ const PLUS_FEATURES = ["Todo lo del plan Pro", "Hasta 5 negocios en tu cuenta", 
 
 type PlanId = "pro_monthly" | "pro_annual" | "plus_monthly" | "plus_annual";
 
+// Precios de respaldo; los reales se leen de la tabla `plans` (la misma que
+// usa el servidor para cobrar), así lo que se muestra siempre es lo que se cobra.
+const FALLBACK_PRICES: Record<PlanId, number> = {
+  pro_monthly: 6990,
+  pro_annual: 59990,
+  plus_monthly: 14990,
+  plus_annual: 149990,
+};
+
+function savingsPct(monthly: number, annual: number): number {
+  if (!monthly || !annual) return 0;
+  // Redondeamos hacia abajo: nunca prometer más ahorro del real.
+  return Math.max(0, Math.floor((1 - annual / (monthly * 12)) * 100));
+}
+
 export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
-  const { business } = usePlan();
+  const { business, planLabel } = usePlan();
   const [provider, setProvider] = useState<"flow" | "mp">("flow");
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [prices, setPrices] = useState<Record<PlanId, number>>(FALLBACK_PRICES);
+
+  useEffect(() => {
+    let active = true;
+    supabase
+      .from("plans")
+      .select("id, price_clp")
+      .then(({ data }) => {
+        if (!active || !data) return;
+        const next = { ...FALLBACK_PRICES };
+        for (const row of data as { id: string; price_clp: number }[]) {
+          if (row.id in next && row.price_clp > 0) next[row.id as PlanId] = row.price_clp;
+        }
+        setPrices(next);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const proSavings = savingsPct(prices.pro_monthly, prices.pro_annual);
+  const plusSavings = savingsPct(prices.plus_monthly, prices.plus_annual);
 
   async function checkout(planId: PlanId) {
     setError(null);
@@ -55,7 +92,7 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
     <div>
       <div className="mb-4">
         <div className="text-sm font-semibold mb-2">
-          {renewal ? "Renueva tu plan Pro" : "Pasa a NegocioFlow Pro"}
+          {renewal ? `Renueva tu plan ${planLabel}` : "Pasa a NegocioFlow Pro"}
         </div>
         <ul className="space-y-1.5">
           {PRO_FEATURES.map((f) => (
@@ -95,7 +132,7 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
           className="border border-line rounded-xl p-4 text-left hover:border-brand-400 transition disabled:opacity-60"
         >
           <div className="text-xs text-muted mb-1">Mensual</div>
-          <div className="text-lg font-bold mb-2">{fmtCLP(6990)}</div>
+          <div className="text-lg font-bold mb-2">{fmtCLP(prices.pro_monthly)}</div>
           <div className="flex items-center justify-center gap-1.5 text-xs font-medium bg-ink text-white rounded-lg py-1.5">
             {loadingPlan === "pro_monthly" && <Loader2 size={12} className="animate-spin" />}
             Elegir mensual
@@ -107,10 +144,10 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
           className="border-2 border-brand-500 rounded-xl p-4 text-left relative hover:bg-brand-50 transition disabled:opacity-60"
         >
           <div className="absolute -top-2 right-3 bg-brand-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
-            Ahorra 28%
+            Ahorra {proSavings}%
           </div>
           <div className="text-xs text-muted mb-1">Anual</div>
-          <div className="text-lg font-bold mb-2">{fmtCLP(59990)}</div>
+          <div className="text-lg font-bold mb-2">{fmtCLP(prices.pro_annual)}</div>
           <div className="flex items-center justify-center gap-1.5 text-xs font-medium bg-brand-600 text-white rounded-lg py-1.5">
             {loadingPlan === "pro_annual" && <Loader2 size={12} className="animate-spin" />}
             Elegir anual
@@ -135,7 +172,7 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
             className="border border-line rounded-xl p-4 text-left hover:border-amber-400 transition disabled:opacity-60"
           >
             <div className="text-xs text-muted mb-1">Mensual</div>
-            <div className="text-lg font-bold mb-2">{fmtCLP(14990)}</div>
+            <div className="text-lg font-bold mb-2">{fmtCLP(prices.plus_monthly)}</div>
             <div className="flex items-center justify-center gap-1.5 text-xs font-medium bg-ink text-white rounded-lg py-1.5">
               {loadingPlan === "plus_monthly" && <Loader2 size={12} className="animate-spin" />}
               Elegir mensual
@@ -147,10 +184,10 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
             className="border-2 border-amber-500 rounded-xl p-4 text-left relative hover:bg-amber-50 transition disabled:opacity-60"
           >
             <div className="absolute -top-2 right-3 bg-amber-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
-              Ahorra 16%
+              Ahorra {plusSavings}%
             </div>
             <div className="text-xs text-muted mb-1">Anual</div>
-            <div className="text-lg font-bold mb-2">{fmtCLP(149990)}</div>
+            <div className="text-lg font-bold mb-2">{fmtCLP(prices.plus_annual)}</div>
             <div className="flex items-center justify-center gap-1.5 text-xs font-medium bg-amber-600 text-white rounded-lg py-1.5">
               {loadingPlan === "plus_annual" && <Loader2 size={12} className="animate-spin" />}
               Elegir anual

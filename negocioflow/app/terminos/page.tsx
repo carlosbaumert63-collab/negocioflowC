@@ -25,9 +25,9 @@ export default function TerminosPage() {
           <section>
             <h2 className="font-semibold mb-1.5">1. Quiénes somos</h2>
             <p>
-              NegocioFlow es un servicio operado por <strong>[COMPLETAR: nombre legal o RUT del
-              responsable]</strong>, con domicilio en <strong>[COMPLETAR: dirección]</strong> y contacto
-              en <strong>[COMPLETAR: correo de soporte]</strong>. Si tienes dudas sobre estos términos,
+              NegocioFlow es un servicio operado por <strong>[COMPLETAR: nombre completo y RUT del
+              responsable]</strong>, con domicilio en <strong>Temuco, Chile</strong> y contacto
+              en <strong>carlosbaumert63@gmail.com</strong>. Si tienes dudas sobre estos términos,
               puedes escribir a ese correo.
             </p>
           </section>
@@ -72,7 +72,7 @@ export default function TerminosPage() {
               Por tratarse de un servicio digital de uso inmediato, en general no ofrecemos reembolsos
               por períodos ya pagados y parcialmente usados, salvo que la ley aplicable indique lo
               contrario. Si tuviste un problema con un cobro, escríbenos a{" "}
-              <strong>[COMPLETAR: correo de soporte]</strong> y lo revisamos caso a caso.
+              <strong>carlosbaumert63@gmail.com</strong> y lo revisamos caso a caso.
             </p>
             <p className="mt-2 text-muted">
               Los precios se muestran en pesos chilenos (CLP). Estamos confirmando con nuestro contador

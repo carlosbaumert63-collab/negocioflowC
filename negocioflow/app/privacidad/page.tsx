@@ -87,7 +87,7 @@ export default function PrivacidadPage() {
             <p>
               Puedes pedirnos en cualquier momento: acceder a tus datos, corregirlos, o eliminar tu
               cuenta y toda la información asociada a tu negocio. Para eso, escríbenos a{" "}
-              <strong>[COMPLETAR: correo de soporte]</strong> desde el correo con el que creaste tu
+              <strong>carlosbaumert63@gmail.com</strong> desde el correo con el que creaste tu
               cuenta. Vamos a confirmar la eliminación una vez procesada.
             </p>
           </section>

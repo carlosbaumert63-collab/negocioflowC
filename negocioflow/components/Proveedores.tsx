@@ -6,12 +6,14 @@ import { type Business, type Supplier } from "../lib/types";
 import ProGate from "./ProGate";
 import OwnerGate from "./OwnerGate";
 import { friendlyDbError } from "../lib/plan";
+import { useEscape } from "../lib/useEscape";
 
 function ProveedoresInner({ business }: { business: Business }) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Supplier | null>(null);
+  const [listError, setListError] = useState("");
 
   async function load() {
     setLoading(true);
@@ -26,8 +28,10 @@ function ProveedoresInner({ business }: { business: Business }) {
   }, [business.id]);
 
   async function handleDelete(id: string) {
-    if (!confirm("¿Eliminar este proveedor?")) return;
-    await supabase.from("suppliers").delete().eq("id", id);
+    if (!confirm("¿Eliminar este proveedor? Las compras anteriores se mantienen, sin el proveedor asociado.")) return;
+    setListError("");
+    const { error } = await supabase.from("suppliers").delete().eq("id", id);
+    if (error) return setListError(friendlyDbError(error.message));
     load();
   }
 
@@ -45,6 +49,8 @@ function ProveedoresInner({ business }: { business: Business }) {
           <Plus size={16} /> Nuevo proveedor
         </button>
       </div>
+
+      {listError && <div role="alert" className="text-sm text-red-600 mb-3">{listError}</div>}
 
       {loading ? (
         <div className="text-sm text-muted py-8 text-center">Cargando…</div>
@@ -71,7 +77,7 @@ function ProveedoresInner({ business }: { business: Business }) {
                   >
                     Editar
                   </button>
-                  <button onClick={() => handleDelete(s.id)} className="text-muted hover:text-red-600">
+                  <button onClick={() => handleDelete(s.id)} className="text-muted hover:text-red-600" aria-label={`Eliminar ${s.name}`}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -125,8 +131,10 @@ function SupplierForm({
   const [email, setEmail] = useState(supplier?.email || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEscape(onClose, !saving);
 
   async function handleSave() {
+    if (saving) return;
     if (!name.trim()) {
       setError("El nombre es obligatorio.");
       return;
@@ -135,10 +143,10 @@ function SupplierForm({
     setError(null);
     const payload = {
       business_id: business.id,
-      name,
-      contact: contact || null,
-      phone: phone || null,
-      email: email || null,
+      name: name.trim(),
+      contact: contact.trim() || null,
+      phone: phone.trim() || null,
+      email: email.trim() || null,
     };
     const { error: err } = supplier
       ? await supabase.from("suppliers").update(payload).eq("id", supplier.id)
@@ -152,55 +160,69 @@ function SupplierForm({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-5 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={() => !saving && onClose()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={supplier ? "Editar proveedor" : "Nuevo proveedor"}
+        className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-5 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-4">
           <div className="font-bold">{supplier ? "Editar proveedor" : "Nuevo proveedor"}</div>
-          <button onClick={onClose}>
+          <button onClick={onClose} aria-label="Cerrar">
             <X size={18} className="text-muted" />
           </button>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-muted mb-1">Nombre</label>
+            <label className="block text-xs font-medium text-muted mb-1" htmlFor="prov-nombre">Nombre</label>
             <input
+              id="prov-nombre"
+              autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full border border-line rounded-lg px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted mb-1">Contacto</label>
+            <label className="block text-xs font-medium text-muted mb-1" htmlFor="prov-contacto">Contacto</label>
             <input
+              id="prov-contacto"
               value={contact}
               onChange={(e) => setContact(e.target.value)}
               className="w-full border border-line rounded-lg px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted mb-1">Teléfono</label>
+            <label className="block text-xs font-medium text-muted mb-1" htmlFor="prov-tel">Teléfono</label>
             <input
+              id="prov-tel"
+              type="tel"
+              inputMode="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className="w-full border border-line rounded-lg px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted mb-1">Email</label>
+            <label className="block text-xs font-medium text-muted mb-1" htmlFor="prov-email">Email</label>
             <input
+              id="prov-email"
+              type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full border border-line rounded-lg px-3 py-2 text-sm"
             />
           </div>
         </div>
-        {error && <div className="text-xs text-red-600 mt-3">{error}</div>}
+        {error && <div role="alert" className="text-xs text-red-600 mt-3">{error}</div>}
         <button
           onClick={handleSave}
           disabled={saving}
           className="w-full bg-ink text-white rounded-lg py-2.5 text-sm font-medium mt-4 disabled:opacity-60"
         >
-          Guardar
+          {saving ? "Guardando…" : "Guardar"}
         </button>
       </div>
     </div>

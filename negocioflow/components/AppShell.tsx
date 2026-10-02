@@ -74,6 +74,7 @@ export default function AppShell({
   businesses,
   onSwitchBusiness,
   onCreateBusiness,
+  onBusinessUpdated,
 }: {
   business: Business;
   userEmail: string;
@@ -81,6 +82,7 @@ export default function AppShell({
   businesses: Business[];
   onSwitchBusiness: (id: string) => void;
   onCreateBusiness: () => void;
+  onBusinessUpdated?: (b: Business) => void;
 }) {
   return (
     <PlanProvider business={business} role={role}>
@@ -90,10 +92,13 @@ export default function AppShell({
         businesses={businesses}
         onSwitchBusiness={onSwitchBusiness}
         onCreateBusiness={onCreateBusiness}
+        onBusinessUpdated={onBusinessUpdated}
       />
     </PlanProvider>
   );
 }
+
+type PaymentNotice = "pending" | "success" | "failed" | "timeout" | null;
 
 function AppShellInner({
   business,
@@ -101,18 +106,25 @@ function AppShellInner({
   businesses,
   onSwitchBusiness,
   onCreateBusiness,
+  onBusinessUpdated,
 }: {
   business: Business;
   userEmail: string;
   businesses: Business[];
   onSwitchBusiness: (id: string) => void;
   onCreateBusiness: () => void;
+  onBusinessUpdated?: (b: Business) => void;
 }) {
-  const { isPro, planLabel, isOwner, daysLeft, showUpgrade, goToPlan, closeUpgrade, refreshSubscription } = usePlan();
+  const { isPro, planLabel, isOwner, daysLeft, showUpgrade, goToPlan, closeUpgrade, refreshSubscription, subscription } =
+    usePlan();
+  // Plan y vencimiento al abrir la app: el pago se da por confirmado cuando
+  // alguno de los dos CAMBIA (sirve también para renovaciones y Pro → Plus).
+  const subKey = `${subscription?.plan || ""}|${subscription?.expires_at || ""}`;
+  const [baselineSubKey] = useState(subKey);
   const [tab, setTab] = useState<Tab>("dashboard");
   const [showMore, setShowMore] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
-  const [pendingNotice, setPendingNotice] = useState(false);
+  const [paymentNotice, setPaymentNotice] = useState<PaymentNotice>(null);
   const mainTabs = isOwner ? MAIN_TABS : MAIN_TABS.filter((t) => !t.ownerOnly);
   const moreTabs = isOwner ? MORE_TABS : MORE_TABS.filter((t) => !t.ownerOnly);
   const allTabs = [...mainTabs, ...moreTabs];
@@ -131,24 +143,48 @@ function AppShellInner({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [showSwitcher, showMore, showUpgrade, closeUpgrade]);
 
+  // Al volver de Flow / Mercado Pago llega ?upgrade=success|failed|pending.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("upgrade") === "pending") {
-      setPendingNotice(true);
-      window.history.replaceState({}, "", window.location.pathname);
-      const t = setTimeout(() => {
-        refreshSubscription();
-        window.location.reload();
-      }, 4000);
-      return () => clearTimeout(t);
-    }
+    const result = params.get("upgrade");
+    if (result !== "pending" && result !== "success" && result !== "failed") return;
+    window.history.replaceState({}, "", window.location.pathname);
+    setPaymentNotice(result);
+    if (result === "failed") return;
+    refreshSubscription();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Mientras el pago se confirma, consultamos el plan cada 3 s (hasta ~45 s).
+  useEffect(() => {
+    if (paymentNotice !== "pending") return;
+    if (isPro && subKey !== baselineSubKey) {
+      setPaymentNotice("success");
+      return;
+    }
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      refreshSubscription();
+      if (tries >= 15) {
+        clearInterval(timer);
+        setPaymentNotice("timeout");
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [paymentNotice, isPro, subKey, baselineSubKey, refreshSubscription]);
+
+  // El aviso de éxito se oculta solo.
+  useEffect(() => {
+    if (paymentNotice !== "success") return;
+    const t = setTimeout(() => setPaymentNotice(null), 8000);
+    return () => clearTimeout(t);
+  }, [paymentNotice]);
 
   function renderTab() {
     switch (tab) {
       case "dashboard":
-        return <Dashboard business={business} />;
+        return <Dashboard business={business} onBusinessUpdated={onBusinessUpdated} />;
       case "ventas":
         return <Ventas business={business} />;
       case "productos":
@@ -358,14 +394,38 @@ function AppShellInner({
           )}
         </AnimatePresence>
 
-        {pendingNotice && (
-          <div className="bg-brand-50 text-brand-700 text-sm px-4 py-2.5 text-center">
-            Estamos confirmando tu pago… esto puede tardar unos segundos.
+        {paymentNotice && (
+          <div
+            role="status"
+            className={`text-sm px-4 py-2.5 flex items-center justify-center gap-3 ${
+              paymentNotice === "success"
+                ? "bg-brand-50 text-brand-700"
+                : paymentNotice === "failed"
+                ? "bg-red-50 text-red-700"
+                : paymentNotice === "timeout"
+                ? "bg-amber-50 text-amber-800"
+                : "bg-brand-50 text-brand-700"
+            }`}
+          >
+            <span className="text-center">
+              {paymentNotice === "pending" && "Estamos confirmando tu pago… esto puede tardar unos segundos."}
+              {paymentNotice === "success" && `¡Pago recibido! Tu plan ${planLabel} ya está activo.`}
+              {paymentNotice === "failed" && "El pago no se completó y no se hizo ningún cobro. Puedes intentarlo de nuevo."}
+              {paymentNotice === "timeout" &&
+                "Tu pago aún se está procesando. Si ya pagaste, el plan se activará en unos minutos; si no, escríbenos."}
+            </span>
+            {paymentNotice !== "pending" && (
+              <button onClick={() => setPaymentNotice(null)} aria-label="Cerrar aviso" className="opacity-70 hover:opacity-100">
+                <X size={14} />
+              </button>
+            )}
           </div>
         )}
-        {isPro && daysLeft !== null && daysLeft <= 7 && (
+        {isOwner && isPro && daysLeft !== null && daysLeft <= 7 && (
           <div className="bg-amber-50 text-amber-700 text-sm px-4 py-2.5 text-center">
-            Tu plan Pro vence en {daysLeft} día(s).{" "}
+            {daysLeft <= 0
+              ? `Tu plan ${planLabel} vence hoy.`
+              : `Tu plan ${planLabel} vence en ${daysLeft} ${daysLeft === 1 ? "día" : "días"}.`}{" "}
             <button onClick={goToPlan} className="underline font-medium">
               Renovar
             </button>
@@ -495,7 +555,7 @@ function AppShellInner({
               transition={{ type: "spring", stiffness: 420, damping: 38 }}
             >
               <div className="flex items-center justify-between mb-4">
-                <div className="font-bold text-lg">NegocioFlow Pro</div>
+                <div className="font-bold text-lg">Planes NegocioFlow</div>
                 <button onClick={closeUpgrade} aria-label="Cerrar">
                   <X size={18} className="text-muted" />
                 </button>

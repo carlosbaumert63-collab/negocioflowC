@@ -13,8 +13,8 @@ export default function ResetPassword({ onDone }: { onDone: () => void }) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (password.length < 6) {
-      setError("La contraseña debe tener al menos 6 caracteres.");
+    if (password.length < 8) {
+      setError("La contraseña debe tener al menos 8 caracteres.");
       return;
     }
     if (password !== confirm) {
@@ -22,11 +22,26 @@ export default function ResetPassword({ onDone }: { onDone: () => void }) {
       return;
     }
     setLoading(true);
-    const { error: err } = await supabase.auth.updateUser({ password });
+    let err: { message: string } | null = null;
+    try {
+      ({ error: err } = await supabase.auth.updateUser({ password }));
+    } catch (e: any) {
+      err = { message: /fetch|network/i.test(e?.message || "") ? "No hay conexión a internet. Intenta de nuevo." : e?.message || "Error inesperado." };
+    }
     setLoading(false);
     if (err) {
-      setError(err.message);
+      setError(
+        /same.*password|different from the old/i.test(err.message)
+          ? "La nueva contraseña debe ser distinta a la anterior."
+          : /weak|at least/i.test(err.message)
+          ? "Esa contraseña es muy débil. Usa al menos 8 caracteres, mezclando letras y números."
+          : err.message
+      );
       return;
+    }
+    // Limpia el #token del link para que no quede en el historial.
+    if (typeof window !== "undefined" && window.location.hash) {
+      window.history.replaceState({}, "", window.location.pathname);
     }
     setDone(true);
   }
@@ -50,28 +65,32 @@ export default function ResetPassword({ onDone }: { onDone: () => void }) {
       <form onSubmit={handleSubmit} className="bg-white border border-line rounded-xl p-6 max-w-sm w-full">
         <div className="flex items-center gap-2 mb-1">
           <KeyRound size={18} />
-          <div className="text-lg font-bold">Crea una nueva contraseña</div>
+          <div className="text-lg font-bold">Crea tu contraseña</div>
         </div>
-        <p className="text-sm text-muted mb-4">Para la cuenta de NegocioFlow.</p>
+        <p className="text-sm text-muted mb-4">La usarás para entrar a NegocioFlow desde cualquier dispositivo.</p>
 
-        <label className="block text-xs font-medium text-muted mb-1">Nueva contraseña</label>
+        <label className="block text-xs font-medium text-muted mb-1" htmlFor="rp-pass">Nueva contraseña</label>
         <input
+          id="rp-pass"
           type="password"
+          autoComplete="new-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="w-full border border-line rounded-lg px-3 py-2 text-sm mb-3"
           placeholder="••••••••"
         />
-        <label className="block text-xs font-medium text-muted mb-1">Confirmar contraseña</label>
+        <label className="block text-xs font-medium text-muted mb-1" htmlFor="rp-confirm">Confirmar contraseña</label>
         <input
+          id="rp-confirm"
           type="password"
+          autoComplete="new-password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           className="w-full border border-line rounded-lg px-3 py-2 text-sm mb-3"
           placeholder="••••••••"
         />
 
-        {error && <div className="text-xs text-red-600 mb-3">{error}</div>}
+        {error && <div role="alert" className="text-xs text-red-600 mb-3">{error}</div>}
 
         <button
           type="submit"
@@ -80,6 +99,13 @@ export default function ResetPassword({ onDone }: { onDone: () => void }) {
         >
           {loading && <Loader2 size={14} className="animate-spin" />}
           Guardar contraseña
+        </button>
+        <button
+          type="button"
+          onClick={() => supabase.auth.signOut()}
+          className="w-full mt-3 text-sm text-muted hover:text-ink"
+        >
+          Cerrar sesión
         </button>
       </form>
     </div>
