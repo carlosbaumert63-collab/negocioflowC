@@ -28,11 +28,14 @@ export default function Onboarding({
   const steps = ["Nombre", "Tipo", "Venta", "Inventario"];
   const profile = getProfile({ business_type: bizType.type, business_description: bizType.description });
 
+  // El control de stock parte según el rubro (una peluquería no lo necesita);
+  // si el usuario ya lo eligió en el último paso y vuelve atrás, se respeta.
+  const [stockTouched, setStockTouched] = useState(false);
   function changeType(v: BusinessTypeValue) {
     setBizType(v);
-    // El control de stock parte según el rubro (una peluquería no lo necesita);
-    // el usuario lo puede cambiar en el último paso.
-    setHasInventory(getProfile({ business_type: v.type, business_description: v.description }).hasInventory);
+    if (!stockTouched) {
+      setHasInventory(getProfile({ business_type: v.type, business_description: v.description }).hasInventory);
+    }
     setError("");
   }
 
@@ -78,7 +81,7 @@ export default function Onboarding({
     <div className="min-h-screen bg-surface flex items-center justify-center px-5">
       <div className="w-full max-w-md bg-white border border-line rounded-2xl p-7 shadow-sm relative my-6">
         {onCancel && (
-          <button onClick={onCancel} className="absolute top-4 right-4 text-muted hover:text-ink">
+          <button onClick={onCancel} aria-label="Cancelar" className="absolute top-4 right-4 text-muted hover:text-ink">
             ✕
           </button>
         )}
@@ -108,7 +111,7 @@ export default function Onboarding({
           <>
             <div className="text-lg font-semibold">¿Qué tipo de negocio tienes?</div>
             <p className="text-sm text-muted mt-1 mb-4">Adaptamos la app a tu rubro. Lo puedes cambiar después.</p>
-            <BusinessTypePicker value={bizType} onChange={changeType} />
+            <BusinessTypePicker value={bizType} onChange={changeType} autoFocusDescription />
           </>
         )}
 
@@ -136,12 +139,17 @@ export default function Onboarding({
             <div className="text-lg font-semibold">¿Quieres llevar control de stock?</div>
             <p className="text-sm text-muted mt-1">
               {profile.hasInventory
-                ? `Te avisamos cuando un ${profile.itemSingular} se esté acabando.`
-                : `En ${profile.label.toLowerCase()} normalmente no hace falta. Si también vendes productos con stock, elige "Sí".`}
+                ? "Te avisamos cuando un producto se esté acabando."
+                : `Para tu rubro normalmente no hace falta. Si además vendes productos (p. ej. ${
+                    profile.kpiMode === "food" ? "bebidas" : "shampoo o accesorios"
+                  }), elige "Sí": podrás marcar qué ${profile.itemPlural} no llevan stock.`}
             </p>
             <div className="grid grid-cols-2 gap-2 mt-4">
               <button
-                onClick={() => setHasInventory(true)}
+                onClick={() => {
+                  setHasInventory(true);
+                  setStockTouched(true);
+                }}
                 className={`px-3 py-2.5 rounded-lg text-sm border ${
                   hasInventory ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-ink"
                 }`}
@@ -149,7 +157,10 @@ export default function Onboarding({
                 Sí
               </button>
               <button
-                onClick={() => setHasInventory(false)}
+                onClick={() => {
+                  setHasInventory(false);
+                  setStockTouched(true);
+                }}
                 className={`px-3 py-2.5 rounded-lg text-sm border ${
                   !hasInventory ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-ink"
                 }`}

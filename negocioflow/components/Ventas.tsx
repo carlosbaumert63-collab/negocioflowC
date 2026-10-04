@@ -322,7 +322,8 @@ function NuevaVentaModal({
   // Stock disponible considerando lo que ya tenía esta venta (al editar).
   function availableStock(productId: string): number | null {
     const product = products.find((p) => p.id === productId);
-    if (!product || !business.has_inventory) return null;
+    // Servicios / productos sin control de stock: no hay tope ni aviso.
+    if (!product || !business.has_inventory || product.track_stock === false) return null;
     const original = (existingSale?.sale_items || [])
       .filter((i) => i.product_id === productId)
       .reduce((s, i) => s + Number(i.quantity), 0);
@@ -455,7 +456,8 @@ function NuevaVentaModal({
                 <div className="px-3 py-3 text-sm text-muted">No hay {profile.itemPlural} que coincidan.</div>
               ) : (
                 matches.map((p) => {
-                  const out = business.has_inventory && Number(p.stock) <= 0;
+                  const tracked = business.has_inventory && p.track_stock !== false;
+                  const out = tracked && Number(p.stock) <= 0;
                   return (
                     <button
                       key={p.id}
@@ -464,7 +466,7 @@ function NuevaVentaModal({
                     >
                       <span className="min-w-0 truncate">
                         {p.name}
-                        {business.has_inventory && (
+                        {tracked && (
                           <span className={`text-xs ml-1.5 ${out ? "text-red-600" : "text-muted"}`}>
                             {out ? "agotado" : `stock ${Number(p.stock)}`}
                           </span>

@@ -11,16 +11,19 @@ export interface BusinessTypeValue {
 export default function BusinessTypePicker({
   value,
   onChange,
+  autoFocusDescription = false,
 }: {
   value: BusinessTypeValue;
   onChange: (v: BusinessTypeValue) => void;
+  /** Enfocar el campo "Cuéntanos qué haces" al elegir "Otro" (solo en el registro). */
+  autoFocusDescription?: boolean;
 }) {
   const preview = value.type === "otro" ? getProfile({ business_type: "otro", business_description: value.description }) : null;
   const matched = value.type === "otro" && !!matchDescription(value.description);
 
   return (
     <div>
-      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tipo de negocio">
+      <div className="grid grid-cols-2 gap-2" role="group" aria-label="Tipo de negocio">
         {PROFILE_ORDER.map((id) => {
           const p = PROFILES[id];
           const selected = value.type === id;
@@ -28,8 +31,7 @@ export default function BusinessTypePicker({
             <button
               key={id}
               type="button"
-              role="radio"
-              aria-checked={selected}
+              aria-pressed={selected}
               onClick={() => onChange({ type: id, description: id === "otro" ? value.description : "" })}
               className={`flex items-start gap-2 px-3 py-2.5 rounded-lg text-left border transition-colors ${
                 selected ? "border-brand-500 bg-brand-50" : "border-line hover:bg-surface"
@@ -56,7 +58,7 @@ export default function BusinessTypePicker({
             id="biz-desc"
             value={value.description}
             maxLength={200}
-            autoFocus
+            autoFocus={autoFocusDescription}
             onChange={(e) => onChange({ type: "otro", description: e.target.value })}
             placeholder="Ej. vendo repuestos de autos"
             className="w-full mt-1.5 px-3 py-2.5 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -69,6 +71,7 @@ export default function BusinessTypePicker({
                     {preview.emoji} Te dejamos todo listo para: {preview.label}
                   </div>
                   <div className="text-muted">Categorías sugeridas: {preview.categories.join(", ")}.</div>
+                  <div className="text-muted mt-1">¿No es así? Elige el rubro más parecido en la lista de arriba.</div>
                 </>
               ) : (
                 <div className="text-muted">

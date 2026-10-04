@@ -64,6 +64,8 @@ export interface Product {
   min_stock: number;
   supplier_id: string | null;
   is_demo?: boolean;
+  /** false = servicio / sin control de stock (se ignoran stock y alertas). */
+  track_stock?: boolean;
 }
 
 export interface SaleItem {

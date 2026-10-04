@@ -7,7 +7,19 @@ import { friendlyDbError } from "../lib/plan";
 import { parseCLP, parseQty, toInputNumber } from "../lib/numbers";
 import { getProfile, cap } from "../lib/businessProfiles";
 
-const EMPTY_FORM = { name: "", sku: "", category: "", sale_price: "", cost: "", stock: "", min_stock: "" };
+const EMPTY_FORM = {
+  name: "",
+  sku: "",
+  category: "",
+  sale_price: "",
+  cost: "",
+  stock: "",
+  min_stock: "",
+  track_stock: true,
+};
+
+/** Producto con control de stock (los servicios y platos normalmente no). */
+const isTracked = (p: Product) => p.track_stock !== false;
 
 export default function Productos({ business }: { business: Business }) {
   const profile = getProfile(business);
@@ -27,6 +39,10 @@ export default function Productos({ business }: { business: Business }) {
   const [onlyLow, setOnlyLow] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [showRestock, setShowRestock] = useState(false);
+  const [originalTracked, setOriginalTracked] = useState(true);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameTo, setRenameTo] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
 
   const load = async () => {
     const { data, error: err } = await supabase
@@ -50,17 +66,21 @@ export default function Productos({ business }: { business: Business }) {
     return Array.from(set).sort();
   }, [products]);
 
-  // Sugerencias del rubro + las que ya usa el negocio.
-  const categoryOptions = useMemo(
-    () => Array.from(new Set([...categories, ...profile.categories])),
-    [categories, profile.categories]
-  );
+  // Sugerencias del rubro que el negocio aún no usa (sin distinguir mayúsculas).
+  const suggestedCategories = useMemo(() => {
+    const used = new Set(categories.map((c) => c.trim().toLowerCase()));
+    return profile.categories.filter((c) => !used.has(c.toLowerCase()));
+  }, [categories, profile.categories]);
+  const categoryOptions = useMemo(() => [...categories, ...suggestedCategories], [categories, suggestedCategories]);
 
   const lowStock = useMemo(
     () =>
-      tracksStock ? products.filter((p) => Number(p.stock) <= 0 || Number(p.stock) <= Number(p.min_stock)) : [],
+      tracksStock
+        ? products.filter((p) => isTracked(p) && (Number(p.stock) <= 0 || Number(p.stock) <= Number(p.min_stock)))
+        : [],
     [products, tracksStock]
   );
+  const lowIds = useMemo(() => new Set(lowStock.map((p) => p.id)), [lowStock]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -71,15 +91,39 @@ export default function Productos({ business }: { business: Business }) {
         (p.sku || "").toLowerCase().includes(q) ||
         (p.category || "").toLowerCase().includes(q);
       const matchesCategory = !categoryFilter || p.category === categoryFilter;
-      const matchesLow = !onlyLow || !tracksStock || Number(p.stock) <= 0 || Number(p.stock) <= Number(p.min_stock);
+      const matchesLow = !onlyLow || lowIds.has(p.id);
       return matchesQuery && matchesCategory && matchesLow;
     });
-  }, [products, query, categoryFilter, onlyLow]);
+  }, [products, query, categoryFilter, onlyLow, lowIds]);
+
+  // Renombrar una categoría en todos los productos (p. ej. al cambiar de rubro).
+  async function renameCategory() {
+    if (!renaming || renameBusy) return;
+    const to = renameTo.trim();
+    if (!to || to === renaming) {
+      setRenaming(null);
+      return;
+    }
+    setRenameBusy(true);
+    setListError("");
+    const { error: err } = await supabase
+      .from("products")
+      .update({ category: to })
+      .eq("business_id", business.id)
+      .eq("category", renaming);
+    setRenameBusy(false);
+    if (err) return setListError(friendlyDbError(err.message));
+    setProducts((prev) => prev.map((p) => (p.category === renaming ? { ...p, category: to } : p)));
+    setCategoryFilter(to);
+    setRenaming(null);
+  }
 
   function openNew() {
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    // Por defecto: un producto de almacén controla stock; un servicio o un plato no.
+    setForm({ ...EMPTY_FORM, track_stock: profile.hasInventory });
     setOriginalStock("");
+    setOriginalTracked(profile.hasInventory);
     setError("");
     setShowForm(true);
   }
@@ -95,8 +139,10 @@ export default function Productos({ business }: { business: Business }) {
       cost: toInputNumber(p.cost),
       stock: stockStr,
       min_stock: toInputNumber(p.min_stock),
+      track_stock: isTracked(p),
     });
     setOriginalStock(stockStr);
+    setOriginalTracked(isTracked(p));
     setError("");
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -136,7 +182,10 @@ export default function Productos({ business }: { business: Business }) {
     // pisaría con el valor de cuando se abrió el formulario y se perderían
     // las ventas hechas mientras tanto (el stock lo mueven ventas y compras).
     // Sin control de stock, el campo no se muestra y el stock no se toca.
-    if (tracksStock && (!editingId || form.stock.trim() !== originalStock)) payload.stock = stock;
+    // Solo se puede cambiar si el negocio lleva inventario (si no, la casilla no se ve).
+    if (tracksStock) payload.track_stock = form.track_stock;
+    const stockVisible = tracksStock && form.track_stock;
+    if (stockVisible && (!editingId || form.stock.trim() !== originalStock || !originalTracked)) payload.stock = stock;
 
     setSaving(true);
     const { error: err } = editingId
@@ -222,7 +271,7 @@ export default function Productos({ business }: { business: Business }) {
             <FormField label="Costo" id="prod-costo">
               <input id="prod-costo" inputMode="numeric" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="Lo que te cuesta a ti" className={inputCls} />
             </FormField>
-            {tracksStock && (
+            {tracksStock && form.track_stock && (
               <>
                 <FormField label="Stock actual" id="prod-stock">
                   <input id="prod-stock" inputMode="decimal" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className={inputCls} />
@@ -233,10 +282,26 @@ export default function Productos({ business }: { business: Business }) {
               </>
             )}
           </div>
-          {!editingId && categories.length === 0 && (
+          {tracksStock && (
+            <label className="flex items-start gap-2 mt-3 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.track_stock}
+                onChange={(e) => setForm({ ...form, track_stock: e.target.checked })}
+                className="mt-0.5"
+              />
+              <span>
+                Controlar stock
+                <span className="block text-xs text-muted">
+                  Desmárcalo para servicios o preparaciones: no se avisará que están agotados.
+                </span>
+              </span>
+            </label>
+          )}
+          {suggestedCategories.length > 0 && (
             <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-muted">Categorías sugeridas:</span>
-              {profile.categories.map((c) => (
+              <span className="text-xs text-muted">Sugeridas para {profile.label}:</span>
+              {suggestedCategories.map((c) => (
                 <button
                   key={c}
                   type="button"
@@ -315,7 +380,10 @@ export default function Productos({ business }: { business: Business }) {
           {categories.map((c) => (
             <button
               key={c}
-              onClick={() => setCategoryFilter(c === categoryFilter ? "" : c)}
+              onClick={() => {
+                setCategoryFilter(c === categoryFilter ? "" : c);
+                setRenaming(null);
+              }}
               aria-pressed={categoryFilter === c}
               className={`text-xs px-3 py-1.5 rounded-full border ${
                 categoryFilter === c ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-muted"
@@ -324,6 +392,53 @@ export default function Productos({ business }: { business: Business }) {
               {c}
             </button>
           ))}
+        </div>
+      )}
+
+      {categoryFilter && (
+        <div className="flex items-center gap-2 mb-4 text-xs text-muted flex-wrap">
+          {renaming === categoryFilter ? (
+            <>
+              <label htmlFor="rename-cat">Nuevo nombre para “{categoryFilter}”:</label>
+              <input
+                id="rename-cat"
+                autoFocus
+                value={renameTo}
+                list="category-options-rename"
+                onChange={(e) => setRenameTo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") renameCategory();
+                  if (e.key === "Escape") setRenaming(null);
+                }}
+                className="px-2 py-1 border border-line rounded-md text-sm text-ink w-40"
+              />
+              <datalist id="category-options-rename">
+                {suggestedCategories.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              <button
+                onClick={renameCategory}
+                disabled={renameBusy}
+                className="bg-ink text-white px-2.5 py-1 rounded-md disabled:opacity-60"
+              >
+                {renameBusy ? "Guardando…" : "Renombrar"}
+              </button>
+              <button onClick={() => setRenaming(null)} className="underline">
+                Cancelar
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => {
+                setRenaming(categoryFilter);
+                setRenameTo(categoryFilter);
+              }}
+              className="flex items-center gap-1 underline hover:text-ink"
+            >
+              <Pencil size={11} /> Renombrar la categoría “{categoryFilter}” en todos tus {items}
+            </button>
+          )}
         </div>
       )}
 
@@ -361,12 +476,12 @@ export default function Productos({ business }: { business: Business }) {
                   <div className="text-xs text-muted mt-0.5">
                     {fmtCLP(price)} · costo {fmtCLP(p.cost)} ·{" "}
                     <span className={margin < 0 ? "text-red-600" : ""}>margen {margin.toFixed(0)}%</span>
-                    {tracksStock && <> · stock {Number(p.stock)}</>}
+                    {tracksStock && isTracked(p) && <> · stock {Number(p.stock)}</>}
                     {p.category && <> · {p.category}</>}
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  {tracksStock && stockBadge(p)}
+                  {tracksStock && isTracked(p) && stockBadge(p)}
                   <button onClick={() => openEdit(p)} className="text-muted hover:text-ink" aria-label={`Editar ${p.name}`}>
                     <Pencil size={15} />
                   </button>

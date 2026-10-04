@@ -265,6 +265,7 @@ function normalize(s: string): string {
 // predecible. Si nada calza, queda el perfil genérico.
 
 interface Niche {
+  /** Inicio de palabra a buscar (sin tildes). Puede tener varias palabras. */
   keywords: string[];
   label: string;
   emoji: string;
@@ -272,39 +273,53 @@ interface Niche {
   categories: string[];
 }
 
+// Reglas: cada palabra clave debe aparecer al INICIO de una palabra
+// ("autos" no calza con "promotor", "flor" no calza con "coliflor"). Gana el
+// nicho con más letras coincidentes, así "comida para perros" (mascotas) le
+// gana a "comida" (restaurante) y "estetica automotriz" (taller) a "estetica".
+// Se evitan palabras ambiguas sueltas ("unas", "spa", "feria", "taller", "delivery").
 const NICHES: Niche[] = [
-  // Primero los más específicos.
-  { keywords: ["repuesto", "auto", "automotr", "neumatic", "lubricent", "moto"], label: "Repuestos automotrices", emoji: "🚗", base: "ferreteria", categories: ["Motor", "Frenos", "Suspensión", "Eléctrico", "Filtros", "Aceites", "Neumáticos", "Accesorios", "Otros"] },
-  { keywords: ["taller", "mecanic", "vulcaniz", "desabolladur"], label: "Taller mecánico", emoji: "🔩", base: "servicios", categories: ["Mantención", "Reparación", "Diagnóstico", "Repuestos", "Neumáticos", "Otros"] },
-  { keywords: ["unas", "manicur", "pedicur", "estetica", "cejas", "pestan", "maquillaj", "depilac", "spa", "masaje"], label: "Estética y belleza", emoji: "💅", base: "peluqueria", categories: ["Manicure", "Pedicure", "Cejas y pestañas", "Depilación", "Faciales", "Masajes", "Productos", "Otros"] },
-  { keywords: ["panaderi", "pasteler", "reposter", "torta", "pan amasado", "empanada"], label: "Panadería / Pastelería", emoji: "🥐", base: "almacen", categories: ["Pan", "Tortas", "Pasteles", "Empanadas", "Galletas", "Bebidas", "Otros"] },
-  { keywords: ["verduler", "fruta", "feria", "hortaliza", "verdura"], label: "Verdulería / Frutería", emoji: "🥕", base: "almacen", categories: ["Frutas", "Verduras", "Hierbas", "Huevos", "Frutos secos", "Otros"] },
-  { keywords: ["carnicer", "carne", "polleri", "embutido"], label: "Carnicería", emoji: "🥩", base: "almacen", categories: ["Vacuno", "Cerdo", "Pollo", "Embutidos", "Cordero", "Otros"] },
-  { keywords: ["mascota", "veterinar", "alimento para perro", "petshop", "pet shop", "perro", "gato"], label: "Tienda de mascotas", emoji: "🐾", base: "almacen", categories: ["Alimento perro", "Alimento gato", "Accesorios", "Higiene", "Juguetes", "Medicamentos", "Otros"] },
-  { keywords: ["libreri", "papeleri", "utiles", "fotocop", "imprenta"], label: "Librería / Papelería", emoji: "📚", base: "almacen", categories: ["Útiles escolares", "Cuadernos", "Oficina", "Arte", "Fotocopias", "Regalos", "Otros"] },
-  { keywords: ["celular", "tecnolog", "computador", "notebook", "accesorios de celular", "electronic", "gamer"], label: "Tecnología", emoji: "📱", base: "ropa", categories: ["Celulares", "Accesorios", "Audio", "Computación", "Cables y cargadores", "Servicio técnico", "Otros"] },
-  { keywords: ["farmaci", "perfumeri", "cosmetic", "belleza"], label: "Perfumería / Cosmética", emoji: "🧴", base: "almacen", categories: ["Perfumes", "Maquillaje", "Cuidado de la piel", "Cabello", "Higiene", "Otros"] },
-  { keywords: ["flor", "planta", "vivero", "jardin"], label: "Florería / Vivero", emoji: "🌷", base: "almacen", categories: ["Flores", "Arreglos", "Plantas", "Maceteros", "Tierra y abono", "Otros"] },
-  { keywords: ["juguet", "regalo", "cotillon", "bazar"], label: "Bazar / Regalos", emoji: "🎁", base: "ropa", categories: ["Juguetes", "Regalos", "Cotillón", "Decoración", "Hogar", "Otros"] },
-  { keywords: ["mueble", "colchon", "decoracion", "hogar"], label: "Hogar y muebles", emoji: "🛋️", base: "ferreteria", categories: ["Muebles", "Colchones", "Decoración", "Cocina", "Baño", "Otros"] },
-  { keywords: ["cafe", "sushi", "pizza", "comida", "food", "sanguch", "completo", "colacion", "almuerzo", "delivery"], label: "Comida", emoji: "🍽️", base: "restaurante", categories: PROFILES.restaurante.categories },
-  { keywords: ["kiosco", "kiosko", "negocio de barrio", "abarrote"], label: "Kiosco / Almacén", emoji: "🛒", base: "almacen", categories: PROFILES.almacen.categories },
-  { keywords: ["vino", "cerveza", "licor", "botiller"], label: "Botillería", emoji: "🍷", base: "botilleria", categories: PROFILES.botilleria.categories },
-  { keywords: ["ropa", "zapat", "calzado", "vestuario", "boutique", "lenceri"], label: "Tienda de ropa", emoji: "👕", base: "ropa", categories: PROFILES.ropa.categories },
+  { keywords: ["repuesto", "automotr", "neumatic", "autopart", "accesorios para auto"], label: "Repuestos automotrices", emoji: "🚗", base: "ferreteria", categories: ["Motor", "Frenos", "Suspensión", "Eléctrico", "Filtros", "Aceites", "Neumáticos", "Accesorios", "Otros"] },
+  { keywords: ["taller mecanico", "taller automotriz", "mecanica automotriz", "mecanico", "vulcaniz", "desabolladur", "lubricentro", "lavado de autos", "lavado de vehiculos", "estetica automotriz", "car wash"], label: "Taller mecánico", emoji: "🔩", base: "servicios", categories: ["Mantención", "Reparación", "Diagnóstico", "Lavado", "Repuestos", "Neumáticos", "Otros"] },
+  { keywords: ["bicicleta", "bicicleteri", "bicicl"], label: "Bicicletería", emoji: "🚲", base: "ferreteria", categories: ["Bicicletas", "Repuestos", "Accesorios", "Servicio técnico", "Otros"] },
+  { keywords: ["manicur", "pedicur", "unas acrilic", "unas de gel", "esmaltado", "nail", "estetica", "salon de belleza", "cejas", "pestan", "depilac", "masaje", "masoterap", "lifting", "cosmetolog"], label: "Estética y belleza", emoji: "💅", base: "peluqueria", categories: ["Manicure", "Pedicure", "Cejas y pestañas", "Depilación", "Faciales", "Masajes", "Productos", "Otros"] },
+  { keywords: ["panaderi", "pasteler", "reposter", "tortas", "pan amasado", "amasanderi", "empanad"], label: "Panadería / Pastelería", emoji: "🥐", base: "almacen", categories: ["Pan", "Tortas", "Pasteles", "Empanadas", "Galletas", "Bebidas", "Otros"] },
+  { keywords: ["verduler", "fruteri", "frutas", "verduras", "hortaliz"], label: "Verdulería / Frutería", emoji: "🥕", base: "almacen", categories: ["Frutas", "Verduras", "Hierbas", "Huevos", "Frutos secos", "Otros"] },
+  { keywords: ["carniceri", "carnes", "polleri", "embutido", "cecina"], label: "Carnicería", emoji: "🥩", base: "almacen", categories: ["Vacuno", "Cerdo", "Pollo", "Embutidos", "Cordero", "Otros"] },
+  { keywords: ["mascota", "veterinar", "petshop", "pet shop", "comida para perro", "comida para gato", "alimento para perro", "alimento para gato", "alimento para mascota", "perros", "gatos"], label: "Tienda de mascotas", emoji: "🐾", base: "almacen", categories: ["Alimento perro", "Alimento gato", "Accesorios", "Higiene", "Juguetes", "Medicamentos", "Otros"] },
+  { keywords: ["libreri", "papeleri", "utiles escolares", "material escolar", "fotocopia", "imprenta"], label: "Librería / Papelería", emoji: "📚", base: "almacen", categories: ["Útiles escolares", "Cuadernos", "Oficina", "Arte", "Fotocopias", "Regalos", "Otros"] },
+  { keywords: ["celular", "tecnolog", "computador", "computacion", "notebook", "electronic", "gamer"], label: "Tecnología", emoji: "📱", base: "ropa", categories: ["Celulares", "Accesorios", "Audio", "Computación", "Cables y cargadores", "Servicio técnico", "Otros"] },
+  { keywords: ["farmaci", "perfumeri", "perfume", "cosmetic", "maquillaj"], label: "Perfumería / Cosmética", emoji: "🧴", base: "almacen", categories: ["Perfumes", "Maquillaje", "Cuidado de la piel", "Cabello", "Higiene", "Otros"] },
+  { keywords: ["floreri", "flores", "arreglos florales", "vivero", "plantas ornamentales"], label: "Florería / Vivero", emoji: "🌷", base: "almacen", categories: ["Flores", "Arreglos", "Plantas", "Maceteros", "Tierra y abono", "Otros"] },
+  { keywords: ["juguet", "regalos", "cotillon", "bazar"], label: "Bazar / Regalos", emoji: "🎁", base: "ropa", categories: ["Juguetes", "Regalos", "Cotillón", "Decoración", "Hogar", "Otros"] },
+  { keywords: ["mueble", "colchon", "articulos para el hogar", "menaje", "decoracion del hogar"], label: "Hogar y muebles", emoji: "🛋️", base: "ferreteria", categories: ["Muebles", "Colchones", "Decoración", "Cocina", "Baño", "Otros"] },
+  { keywords: ["cafeteri", "cafe", "sushi", "pizza", "comida", "fast food", "sangucher", "sandwich", "completos", "colaciones", "almuerzos", "restaurant", "picada", "food truck", "foodtruck", "fuente de soda"], label: "Comida", emoji: "🍽️", base: "restaurante", categories: PROFILES.restaurante.categories },
+  { keywords: ["kiosco", "kiosko", "minimarket", "almacen", "abarrote", "supermercado", "negocio de barrio"], label: "Almacén / Minimarket", emoji: "🛒", base: "almacen", categories: PROFILES.almacen.categories },
+  { keywords: ["botiller", "vinos", "cervezas", "licores", "licoreri", "cervecer"], label: "Botillería", emoji: "🍷", base: "botilleria", categories: PROFILES.botilleria.categories },
+  { keywords: ["ropa", "zapat", "calzado", "vestuario", "boutique", "lenceri", "poleras"], label: "Tienda de ropa", emoji: "👕", base: "ropa", categories: PROFILES.ropa.categories },
   { keywords: ["peluquer", "barber", "corte de pelo"], label: "Peluquería / Barbería", emoji: "💈", base: "peluqueria", categories: PROFILES.peluqueria.categories },
-  { keywords: ["ferreter", "construcc", "material"], label: "Ferretería", emoji: "🔧", base: "ferreteria", categories: PROFILES.ferreteria.categories },
-  { keywords: ["clase", "curso", "profesor", "asesor", "consult", "diseño", "diseno", "fotograf", "contador", "abogad", "gasfiter", "electricist", "limpieza", "flete", "mudanza", "reparac", "instalac", "servicio"], label: "Servicios", emoji: "💻", base: "servicios", categories: PROFILES.servicios.categories },
+  { keywords: ["ferreter", "materiales de construccion", "construccion", "herramientas"], label: "Ferretería", emoji: "🔧", base: "ferreteria", categories: PROFILES.ferreteria.categories },
+  { keywords: ["clases", "profesor", "asesor", "consultor", "diseno", "fotograf", "contador", "contabilidad", "abogad", "gasfiter", "electricist", "servicio de limpieza", "fletes", "flete", "mudanza", "reparacion", "reparaciones", "instalacion", "costura", "arreglos de ropa", "eventos", "cibercafe", "cyber", "cafe internet", "servicio", "tecnico"], label: "Servicios", emoji: "💻", base: "servicios", categories: PROFILES.servicios.categories },
 ];
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const NICHE_PATTERNS = NICHES.map((niche) => ({
+  niche,
+  patterns: niche.keywords.map((k) => ({ k, re: new RegExp(`(?:^|[^a-z0-9])${escapeRegex(normalize(k))}`) })),
+}));
 
 /** Busca el rubro que mejor calza con lo que escribió el usuario. */
 export function matchDescription(description: string | null | undefined): Niche | null {
   const text = normalize(description || "");
   if (text.length < 3) return null;
   let best: { niche: Niche; score: number } | null = null;
-  for (const niche of NICHES) {
+  for (const { niche, patterns } of NICHE_PATTERNS) {
     let score = 0;
-    for (const k of niche.keywords) {
-      if (text.includes(normalize(k))) score += k.length; // las coincidencias más largas pesan más
+    for (const { k, re } of patterns) {
+      if (re.test(text)) score += k.length; // las coincidencias más largas pesan más
     }
     if (score > 0 && (!best || score > best.score)) best = { niche, score };
   }
@@ -316,6 +331,7 @@ function fromDescription(description: string | null | undefined): BusinessProfil
   const niche = matchDescription(description);
   if (!niche) return generic;
   const base = PROFILES[niche.base];
+  const isService = base.itemSingular === "servicio";
   return {
     ...base,
     id: "otro",
@@ -332,6 +348,7 @@ function fromDescription(description: string | null | undefined): BusinessProfil
         ? base.demoItems
         : generic.demoItems.map((d, i) => ({
             ...d,
+            name: isService ? d.name.replace("Producto", "Servicio") : d.name,
             category: niche.categories[i % Math.max(1, niche.categories.length - 1)],
             stock: base.hasInventory ? d.stock : 0,
             min_stock: base.hasInventory ? d.min_stock : 0,

@@ -76,6 +76,8 @@ export default function Dashboard({
   const { isPro, isOwner, goToPlan } = usePlan();
   const profile = getProfile(business);
   const [showTypeModal, setShowTypeModal] = useState(false);
+  // Tras cambiar de rubro con la demo cargada, se ofrece cambiarla al nuevo rubro.
+  const [demoOutdated, setDemoOutdated] = useState(false);
   const [s, setS] = useState<Summary | null>(null);
   const [loadError, setLoadError] = useState("");
   const [hasAnyData, setHasAnyData] = useState(true);
@@ -182,6 +184,17 @@ export default function Dashboard({
     await Promise.all([checkDemoState(), load()]);
   }
 
+  async function handleSwitchDemo() {
+    setDemoBusy(true);
+    setDemoError("");
+    const cleared = await clearDemoData(business.id);
+    const res = cleared.error ? cleared : await seedDemoData(business.id, profile);
+    setDemoBusy(false);
+    if (res.error) return setDemoError(friendlyDbError(res.error));
+    setDemoOutdated(false);
+    await Promise.all([checkDemoState(), load()]);
+  }
+
   async function handleClearDemo() {
     if (!confirm("¿Borrar todos los datos de demostración? Tus datos reales no se tocan.")) return;
     setDemoBusy(true);
@@ -189,6 +202,7 @@ export default function Dashboard({
     const res = await clearDemoData(business.id);
     setDemoBusy(false);
     if (res.error) return setDemoError(friendlyDbError(res.error));
+    setDemoOutdated(false);
     await Promise.all([checkDemoState(), load()]);
   }
 
@@ -215,8 +229,17 @@ export default function Dashboard({
   // Sin control de stock (p. ej. una peluquería) no tiene sentido avisar "agotado".
   const stockAlerts = business.has_inventory && (s.out_of_stock > 0 || s.low_stock > 0) && (
     <>
-      {s.out_of_stock > 0 && <Alert text={`${s.out_of_stock} ${profile.itemSingular}(s) están agotados.`} />}
-      {s.low_stock > 0 && <Alert text={`${s.low_stock} ${profile.itemSingular}(s) tienen stock bajo.`} />}
+      {/* Solo cuentan productos con control de stock: siempre son "productos". */}
+      {s.out_of_stock > 0 && (
+        <Alert
+          text={s.out_of_stock === 1 ? "1 producto está agotado." : `${s.out_of_stock} productos están agotados.`}
+        />
+      )}
+      {s.low_stock > 0 && (
+        <Alert
+          text={s.low_stock === 1 ? "1 producto tiene stock bajo." : `${s.low_stock} productos tienen stock bajo.`}
+        />
+      )}
     </>
   );
   const terms = kpiTerms(profile);
@@ -280,6 +303,7 @@ export default function Dashboard({
             onClick={() => setShowTypeModal(true)}
             className="mt-2 inline-flex items-center gap-1.5 text-xs border border-line bg-white rounded-full px-2.5 py-1 text-muted hover:text-ink"
             title="Cambiar el tipo de negocio"
+            aria-label={`Tipo de negocio: ${profile.label}. Cambiar`}
           >
             <span aria-hidden>{profile.emoji}</span> {profile.label}
             <Pencil size={11} />
@@ -300,6 +324,16 @@ export default function Dashboard({
             <Sparkles size={15} className="flex-shrink-0" />
             Estás viendo datos de <strong>DEMOSTRACIÓN</strong>, no son tus datos reales.
           </div>
+          <div className="flex items-center gap-3 flex-shrink-0">
+          {demoOutdated && (
+            <button
+              onClick={handleSwitchDemo}
+              disabled={demoBusy}
+              className="text-xs font-medium underline disabled:opacity-60"
+            >
+              Cambiar demo a {profile.label}
+            </button>
+          )}
           <button
             onClick={handleClearDemo}
             disabled={demoBusy}
@@ -308,6 +342,7 @@ export default function Dashboard({
             {demoBusy ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
             Borrar demo
           </button>
+          </div>
         </div>
       )}
 
@@ -378,7 +413,7 @@ export default function Dashboard({
             className="flex items-center gap-2 text-sm px-3 py-2.5 rounded-lg border border-amber-100 bg-amber-50 text-amber-700 mb-6 w-full text-left"
           >
             <Lock size={14} className="flex-shrink-0" />
-            Tienes {profile.itemPlural} con stock bajo o agotado. Las alertas detalladas son una función Pro.
+            Tienes productos con stock bajo o agotado. Las alertas detalladas son una función Pro.
           </button>
         )
       )}
@@ -397,7 +432,11 @@ export default function Dashboard({
           <StatCard
             label="Stock bajo"
             value={String(s.low_stock + s.out_of_stock)}
-            sub={s.out_of_stock > 0 ? `${s.out_of_stock} agotado(s)` : `${profile.itemPlural} por reponer`}
+            sub={
+              s.out_of_stock > 0
+                ? `${s.out_of_stock} ${s.out_of_stock === 1 ? "agotado" : "agotados"}`
+                : "productos por reponer"
+            }
             warn={s.low_stock + s.out_of_stock > 0}
           />
         ) : (
@@ -406,7 +445,11 @@ export default function Dashboard({
         <StatCard
           label={terms.top}
           value={s.today_top_sold ? s.today_top_sold.name : "—"}
-          sub={s.today_top_sold ? `${fmtQty(s.today_top_sold.qty)} hoy` : `Aún sin ${terms.sales.toLowerCase()} hoy`}
+          sub={
+            s.today_top_sold
+              ? `${fmtQty(s.today_top_sold.qty, profile.kpiMode === "services")} hoy`
+              : `Aún sin ${terms.sales.toLowerCase()} hoy`
+          }
           small
         />
       </div>
@@ -607,6 +650,7 @@ export default function Dashboard({
           onSaved={(b) => {
             setShowTypeModal(false);
             onBusinessUpdated?.(b);
+            if (demoActive) setDemoOutdated(true);
           }}
         />
       )}
@@ -620,7 +664,7 @@ function kpiTerms(profile: BusinessProfile) {
     return {
       sales: "Ingresos",
       count: "Clientes atendidos",
-      top: profile.id === "peluqueria" ? "Servicio más pedido" : `${profile.itemSingular === "servicio" ? "Servicio" : "Producto"} más vendido`,
+      top: "Servicio más pedido",
       topMonth: "Más pedido del mes",
     };
   }
@@ -630,8 +674,9 @@ function kpiTerms(profile: BusinessProfile) {
   return { sales: "Ventas", count: "N° de ventas", top: "Más vendido", topMonth: "Más vendido del mes" };
 }
 
-function fmtQty(n: number): string {
+function fmtQty(n: number, services = false): string {
   const v = Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "").replace(".", ",");
+  if (services) return `${v} ${n === 1 ? "vez" : "veces"}`;
   return `${v} ${n === 1 ? "unidad" : "unidades"}`;
 }
 
@@ -682,23 +727,36 @@ function BusinessTypeModal({
     description: business.business_description || "",
   });
   const [hasInventory, setHasInventory] = useState(business.has_inventory);
+  // Si el dueño ya eligió algo distinto a lo típico de su rubro, o tocó la
+  // casilla, no se la cambiamos al elegir otro rubro.
+  const [stockTouched, setStockTouched] = useState(business.has_inventory !== current.hasInventory);
+  const [stockNote, setStockNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   useEscape(onClose);
 
   function change(v: BusinessTypeValue) {
     setValue(v);
-    setHasInventory(getProfile({ business_type: v.type, business_description: v.description }).hasInventory);
     setError("");
+    if (stockTouched) return;
+    const next = getProfile({ business_type: v.type, business_description: v.description }).hasInventory;
+    if (next !== hasInventory) {
+      setHasInventory(next);
+      setStockNote(next ? "Activamos el control de stock para este rubro." : "Desactivamos el control de stock para este rubro.");
+    }
   }
 
+  const unchangedOtro =
+    value.type === "otro" && current.id === "otro" && value.description.trim() === (business.business_description || "").trim();
+
   async function save() {
-    if (value.type === "otro" && value.description.trim().length < 3) {
+    // Un negocio antiguo sin descripción puede guardar (p. ej. solo cambiar el stock).
+    if (value.type === "otro" && value.description.trim().length < 3 && !unchangedOtro) {
       return setError("Cuéntanos en pocas palabras qué hace tu negocio, o elige uno de la lista.");
     }
     const patch = {
       business_type: value.type,
-      business_description: value.type === "otro" ? value.description.trim().slice(0, 200) : null,
+      business_description: value.type === "otro" ? value.description.trim().slice(0, 200) || null : null,
       has_inventory: hasInventory,
     };
     setSaving(true);
@@ -734,13 +792,20 @@ function BusinessTypeModal({
           <input
             type="checkbox"
             checked={hasInventory}
-            onChange={(e) => setHasInventory(e.target.checked)}
+            onChange={(e) => {
+              setHasInventory(e.target.checked);
+              setStockTouched(true);
+              setStockNote("");
+            }}
             className="mt-0.5"
           />
           <span>
             Llevar control de stock
             <span className="block text-xs text-muted">
-              Avisos de {preview.itemPlural} agotados o por reponer.
+              {stockNote ||
+                (preview.itemSingular === "servicio"
+                  ? "Actívalo si además vendes productos (p. ej. shampoo); los servicios no se cuentan."
+                  : "Avisos de productos agotados o por reponer.")}
             </span>
           </span>
         </label>

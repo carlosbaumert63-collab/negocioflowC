@@ -29,7 +29,11 @@ export async function seedDemoData(
   // 1) Productos demo
   const { data: products, error: prodErr } = await supabase
     .from("products")
-    .insert(profile.demoItems.map((p) => ({ ...p, business_id: businessId, is_demo: true })))
+    .insert(
+      // Los servicios / platos (stock 0) van sin control de stock: así no
+      // aparecen como "agotados" aunque el negocio active el inventario.
+      profile.demoItems.map((p) => ({ ...p, business_id: businessId, is_demo: true, track_stock: p.stock > 0 }))
+    )
     .select();
   if (prodErr) return { error: prodErr.message };
 
