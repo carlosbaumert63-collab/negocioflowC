@@ -3,6 +3,7 @@ export interface Business {
   user_id: string;
   name: string;
   business_type: string;
+  business_description?: string | null;
   currency: string;
   main_sale_method: string;
   has_inventory: boolean;

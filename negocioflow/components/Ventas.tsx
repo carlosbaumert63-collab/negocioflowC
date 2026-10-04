@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Minus, X, Trash2, Search, Pencil, Undo2, Receipt, Loader2, FileDown } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, PAYMENT_METHODS, type Business, type Product, type Sale, type SaleItem, type Customer } from "../lib/types";
+import { getProfile } from "../lib/businessProfiles";
 import { localISODate, formatDateCL } from "../lib/dates";
 import { friendlyDbError } from "../lib/plan";
 import { exportSaleReceiptPDF } from "../lib/export";
@@ -11,6 +12,7 @@ import { usePlan } from "./PlanContext";
 const PAGE_SIZE = 50;
 
 export default function Ventas({ business }: { business: Business }) {
+  const profile = getProfile(business);
   const { isPro, isOwner } = usePlan();
   const [sales, setSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -111,7 +113,14 @@ export default function Ventas({ business }: { business: Business }) {
   }, [sales, query, customerName]);
 
   async function handleVoid(sale: Sale) {
-    if (!confirm("¿Anular esta venta? Se devolverá el stock de los productos.")) return;
+    if (
+      !confirm(
+        business.has_inventory
+          ? `¿Anular esta venta? Se devolverá el stock de los ${profile.itemPlural}.`
+          : "¿Anular esta venta? Dejará de contar en tus totales."
+      )
+    )
+      return;
     setBusyId(sale.id);
     setListError("");
     // Anular y devolver stock ocurre en una sola transacción en la base de datos.
@@ -142,7 +151,7 @@ export default function Ventas({ business }: { business: Business }) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar por producto, cliente, método de pago o fecha…"
+            placeholder={`Buscar por ${profile.itemSingular}, cliente, método de pago o fecha…`}
             aria-label="Buscar ventas"
             className="w-full pl-9 pr-3 py-2 border border-line rounded-lg text-sm"
           />
@@ -273,6 +282,8 @@ function NuevaVentaModal({
   onSaved: () => void;
 }) {
   const isEditing = !!existingSale;
+  const profile = getProfile(business);
+  const item = profile.itemSingular;
   const [items, setItems] = useState<SaleItem[]>(
     existingSale?.sale_items ? existingSale.sale_items.map((i) => ({ ...i, quantity: Number(i.quantity) })) : []
   );
@@ -363,9 +374,9 @@ function NuevaVentaModal({
   const finalize = async () => {
     if (saving) return;
     setError("");
-    if (items.length === 0) return setError("Agrega al menos un producto.");
+    if (items.length === 0) return setError(`Agrega al menos un ${item}.`);
     if (items.some((i) => !Number.isFinite(i.quantity) || i.quantity <= 0))
-      return setError("Hay un producto con cantidad 0. Corrígela o quítalo de la venta.");
+      return setError(`Hay un ${item} con cantidad 0. Corrígela o quítalo de la venta.`);
     if (discountRaw < 0) return setError("El descuento no puede ser negativo.");
     if (saleDate > today) return setError("La fecha de la venta no puede ser futura.");
     setSaving(true);
@@ -416,7 +427,7 @@ function NuevaVentaModal({
 
         {products.length === 0 && items.length === 0 ? (
           <div className="text-sm text-muted py-6 text-center">
-            Primero agrega productos en la sección "Productos" para poder venderlos.
+            Primero agrega tus {profile.itemPlural} en la sección "{profile.navLabel}" para poder venderlos.
           </div>
         ) : (
           <>
@@ -432,8 +443,8 @@ function NuevaVentaModal({
                     addProduct(matches[0]);
                   }
                 }}
-                placeholder="Buscar producto por nombre, código o categoría…"
-                aria-label="Buscar producto"
+                placeholder={`Buscar ${item} por nombre, código o categoría…`}
+                aria-label={`Buscar ${item}`}
                 autoFocus={!isEditing}
                 className="w-full pl-9 pr-3 py-2.5 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
@@ -441,7 +452,7 @@ function NuevaVentaModal({
 
             <div className="border border-line rounded-lg max-h-44 overflow-y-auto mb-4 divide-y divide-line">
               {matches.length === 0 ? (
-                <div className="px-3 py-3 text-sm text-muted">No hay productos que coincidan.</div>
+                <div className="px-3 py-3 text-sm text-muted">No hay {profile.itemPlural} que coincidan.</div>
               ) : (
                 matches.map((p) => {
                   const out = business.has_inventory && Number(p.stock) <= 0;

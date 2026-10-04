@@ -20,7 +20,11 @@ import {
   ChevronDown,
   Plus,
   Check,
+  Scissors,
+  UtensilsCrossed,
+  Briefcase,
 } from "lucide-react";
+import { getProfile } from "../lib/businessProfiles";
 import { supabase } from "../lib/supabaseClient";
 import type { Business, BusinessRole } from "../lib/types";
 import { PlanProvider, usePlan } from "./PlanContext";
@@ -125,7 +129,18 @@ function AppShellInner({
   const [showMore, setShowMore] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [paymentNotice, setPaymentNotice] = useState<PaymentNotice>(null);
-  const mainTabs = isOwner ? MAIN_TABS : MAIN_TABS.filter((t) => !t.ownerOnly);
+  // La sección de productos toma el nombre del rubro: "Servicios", "Carta"…
+  const profile = getProfile(business);
+  const itemsIcon =
+    profile.id === "peluqueria" || (profile.kpiMode === "services" && profile.emoji === "💅")
+      ? Scissors
+      : profile.kpiMode === "food"
+      ? UtensilsCrossed
+      : profile.kpiMode === "services"
+      ? Briefcase
+      : Package;
+  const mainTabsAll = MAIN_TABS.map((t) => (t.key === "productos" ? { ...t, label: profile.navLabel, icon: itemsIcon } : t));
+  const mainTabs = isOwner ? mainTabsAll : mainTabsAll.filter((t) => !t.ownerOnly);
   const moreTabs = isOwner ? MORE_TABS : MORE_TABS.filter((t) => !t.ownerOnly);
   const allTabs = [...mainTabs, ...moreTabs];
 

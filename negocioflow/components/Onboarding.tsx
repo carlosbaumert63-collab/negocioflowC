@@ -1,8 +1,10 @@
 "use client";
 import React, { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { BUSINESS_TYPES, PAYMENT_METHODS } from "../lib/types";
+import { PAYMENT_METHODS } from "../lib/types";
 import { friendlyDbError } from "../lib/plan";
+import { getProfile } from "../lib/businessProfiles";
+import BusinessTypePicker, { type BusinessTypeValue } from "./BusinessTypePicker";
 
 export default function Onboarding({
   userId,
@@ -15,14 +17,33 @@ export default function Onboarding({
 }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
-  const [businessType, setBusinessType] = useState(BUSINESS_TYPES[0]);
-  const [currency] = useState("CLP");
+  const [bizType, setBizType] = useState<BusinessTypeValue>({ type: "almacen", description: "" });
+  const currency = "CLP";
   const [mainSaleMethod, setMainSaleMethod] = useState(PAYMENT_METHODS[0]);
   const [hasInventory, setHasInventory] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const steps = ["Nombre", "Tipo", "Moneda", "Venta", "Inventario"];
+  // La moneda ya no es un paso: por ahora solo existe CLP.
+  const steps = ["Nombre", "Tipo", "Venta", "Inventario"];
+  const profile = getProfile({ business_type: bizType.type, business_description: bizType.description });
+
+  function changeType(v: BusinessTypeValue) {
+    setBizType(v);
+    // El control de stock parte según el rubro (una peluquería no lo necesita);
+    // el usuario lo puede cambiar en el último paso.
+    setHasInventory(getProfile({ business_type: v.type, business_description: v.description }).hasInventory);
+    setError("");
+  }
+
+  function next() {
+    setError("");
+    if (step === 0 && !name.trim()) return setError("Ingresa el nombre de tu negocio.");
+    if (step === 1 && bizType.type === "otro" && bizType.description.trim().length < 3) {
+      return setError("Cuéntanos en pocas palabras qué hace tu negocio, o elige uno de la lista.");
+    }
+    setStep(step + 1);
+  }
 
   const finish = async () => {
     if (!name.trim()) {
@@ -36,7 +57,8 @@ export default function Onboarding({
       .insert({
         user_id: userId,
         name: name.trim(),
-        business_type: businessType,
+        business_type: bizType.type,
+        business_description: bizType.type === "otro" ? bizType.description.trim().slice(0, 200) : null,
         currency,
         main_sale_method: mainSaleMethod,
         has_inventory: hasInventory,
@@ -54,7 +76,7 @@ export default function Onboarding({
 
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center px-5">
-      <div className="w-full max-w-md bg-white border border-line rounded-2xl p-7 shadow-sm relative">
+      <div className="w-full max-w-md bg-white border border-line rounded-2xl p-7 shadow-sm relative my-6">
         {onCancel && (
           <button onClick={onCancel} className="absolute top-4 right-4 text-muted hover:text-ink">
             ✕
@@ -84,33 +106,13 @@ export default function Onboarding({
 
         {step === 1 && (
           <>
-            <div className="text-lg font-semibold">¿Qué tipo de negocio es?</div>
-            <div className="grid grid-cols-2 gap-2 mt-4">
-              {BUSINESS_TYPES.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setBusinessType(t)}
-                  className={`px-3 py-2.5 rounded-lg text-sm border ${
-                    businessType === t ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-ink"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <div className="text-lg font-semibold">¿Qué tipo de negocio tienes?</div>
+            <p className="text-sm text-muted mt-1 mb-4">Adaptamos la app a tu rubro. Lo puedes cambiar después.</p>
+            <BusinessTypePicker value={bizType} onChange={changeType} />
           </>
         )}
 
         {step === 2 && (
-          <>
-            <div className="text-lg font-semibold">Moneda</div>
-            <div className="mt-4 px-3 py-2.5 rounded-lg border border-line bg-surface text-sm text-muted">
-              Pesos chilenos (CLP) — por ahora es la única moneda disponible.
-            </div>
-          </>
-        )}
-
-        {step === 3 && (
           <>
             <div className="text-lg font-semibold">¿Cuál es tu método principal de venta?</div>
             <div className="grid grid-cols-2 gap-2 mt-4">
@@ -129,9 +131,14 @@ export default function Onboarding({
           </>
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <>
-            <div className="text-lg font-semibold">¿Tienes inventario de productos?</div>
+            <div className="text-lg font-semibold">¿Quieres llevar control de stock?</div>
+            <p className="text-sm text-muted mt-1">
+              {profile.hasInventory
+                ? `Te avisamos cuando un ${profile.itemSingular} se esté acabando.`
+                : `En ${profile.label.toLowerCase()} normalmente no hace falta. Si también vendes productos con stock, elige "Sí".`}
+            </p>
             <div className="grid grid-cols-2 gap-2 mt-4">
               <button
                 onClick={() => setHasInventory(true)}
@@ -153,7 +160,7 @@ export default function Onboarding({
           </>
         )}
 
-        {error && <div className="text-sm text-red-600 mt-4">{error}</div>}
+        {error && <div role="alert" className="text-sm text-red-600 mt-4">{error}</div>}
 
         <div className="flex justify-between mt-7">
           {step > 0 ? (
@@ -165,7 +172,7 @@ export default function Onboarding({
           )}
           {step < steps.length - 1 ? (
             <button
-              onClick={() => setStep(step + 1)}
+              onClick={next}
               className="bg-brand-500 text-white text-sm font-semibold px-5 py-2 rounded-lg"
             >
               Siguiente

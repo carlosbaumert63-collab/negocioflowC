@@ -22,6 +22,9 @@ import { seedDemoData, clearDemoData, hasDemoData } from "../lib/demoData";
 import { FREE_LIMITS, friendlyDbError } from "../lib/plan";
 import { localISODate, formatDateCL } from "../lib/dates";
 import { parseCLP } from "../lib/numbers";
+import { getProfile, type BusinessProfile } from "../lib/businessProfiles";
+import BusinessTypePicker, { type BusinessTypeValue } from "./BusinessTypePicker";
+import { useEscape } from "../lib/useEscape";
 
 // Lo que devuelve la función dashboard_summary de la base de datos. Todo se
 // suma en SQL, así que no hay tope de filas ni diferencias de zona horaria.
@@ -43,6 +46,9 @@ interface Summary {
   products_count_real: number;
   pending: { receivable: number; customers: number; sales: number };
   top_product: { name: string; profit: number } | null;
+  today_top_sold: { name: string; qty: number } | null;
+  month_top_sold: { name: string; qty: number } | null;
+  month_top_category: { name: string; amount: number } | null;
   daily: { date: string; sales: number; count: number }[];
 }
 
@@ -68,6 +74,8 @@ export default function Dashboard({
   onBusinessUpdated?: (b: Business) => void;
 }) {
   const { isPro, isOwner, goToPlan } = usePlan();
+  const profile = getProfile(business);
+  const [showTypeModal, setShowTypeModal] = useState(false);
   const [s, setS] = useState<Summary | null>(null);
   const [loadError, setLoadError] = useState("");
   const [hasAnyData, setHasAnyData] = useState(true);
@@ -116,6 +124,11 @@ export default function Dashboard({
         sales: num(raw.pending?.sales),
       },
       top_product: raw.top_product ? { name: raw.top_product.name, profit: num(raw.top_product.profit) } : null,
+      today_top_sold: raw.today_top_sold ? { name: raw.today_top_sold.name, qty: num(raw.today_top_sold.qty) } : null,
+      month_top_sold: raw.month_top_sold ? { name: raw.month_top_sold.name, qty: num(raw.month_top_sold.qty) } : null,
+      month_top_category: raw.month_top_category
+        ? { name: raw.month_top_category.name, amount: num(raw.month_top_category.amount) }
+        : null,
       daily: (raw.daily || []).map((d: any) => ({ date: d.date, sales: num(d.sales), count: num(d.count) })),
     });
   }, [business.id]);
@@ -163,7 +176,7 @@ export default function Dashboard({
   async function handleLoadDemo() {
     setDemoBusy(true);
     setDemoError("");
-    const res = await seedDemoData(business.id);
+    const res = await seedDemoData(business.id, profile);
     setDemoBusy(false);
     if (res.error) return setDemoError(friendlyDbError(res.error));
     await Promise.all([checkDemoState(), load()]);
@@ -199,21 +212,26 @@ export default function Dashboard({
     return <div className="text-sm text-muted py-10 text-center">Cargando…</div>;
   }
 
-  const stockAlerts = (s.out_of_stock > 0 || s.low_stock > 0) && (
+  // Sin control de stock (p. ej. una peluquería) no tiene sentido avisar "agotado".
+  const stockAlerts = business.has_inventory && (s.out_of_stock > 0 || s.low_stock > 0) && (
     <>
-      {s.out_of_stock > 0 && <Alert text={`${s.out_of_stock} producto(s) están agotados.`} />}
-      {s.low_stock > 0 && <Alert text={`${s.low_stock} producto(s) tienen stock bajo.`} />}
+      {s.out_of_stock > 0 && <Alert text={`${s.out_of_stock} ${profile.itemSingular}(s) están agotados.`} />}
+      {s.low_stock > 0 && <Alert text={`${s.low_stock} ${profile.itemSingular}(s) tienen stock bajo.`} />}
     </>
   );
+  const terms = kpiTerms(profile);
 
   if (!isOwner) {
     return (
       <div>
         <h1 className="text-xl font-bold mb-1">Hola 👋</h1>
-        <p className="text-sm text-muted mb-6">Así va {business.name} hoy.</p>
+        <p className="text-sm text-muted mb-6">
+          {profile.emoji} Así va {business.name} hoy.
+        </p>
         <div className="grid grid-cols-2 gap-3 mb-6">
-          <StatCard label="Ventas de hoy" value={fmtCLP(s.today_sales)} highlight />
-          <StatCard label="N° de ventas" value={String(s.today_count)} />
+          <StatCard label={`${terms.sales} de hoy`} value={fmtCLP(s.today_sales)} highlight />
+          <StatCard label={terms.count} value={String(s.today_count)} />
+          {s.today_top_sold && <StatCard label={terms.top} value={s.today_top_sold.name} small />}
         </div>
         {stockAlerts && <div className="space-y-2">{stockAlerts}</div>}
       </div>
@@ -239,13 +257,14 @@ export default function Dashboard({
   function shareToday() {
     const lines = [
       `📊 *${business.name}* — resumen de hoy (${formatDateCL(localISODate())})`,
-      `Ventas: ${fmtCLP(s!.today_sales)} (${s!.today_count} ${s!.today_count === 1 ? "venta" : "ventas"})`,
+      `${terms.sales}: ${fmtCLP(s!.today_sales)} (${terms.count.toLowerCase()}: ${s!.today_count})`,
       `Gastos: ${fmtCLP(todayExpenses)}`,
       `Ganancia estimada: ${fmtCLP(todayProfit)}`,
       ``,
       `Mes a la fecha: ${fmtCLP(s!.month_to_date_sales)} en ventas`,
     ];
     if (goal) lines.push(`Meta del mes: ${Math.min(100, Math.round((s!.month_sales / goal) * 100))}% cumplida`);
+    if (s!.today_top_sold) lines.push(`${terms.top}: ${s!.today_top_sold.name}`);
     if (s!.pending.receivable > 0) lines.push(`Por cobrar (fiado): ${fmtCLP(s!.pending.receivable)}`);
     lines.push(``, `Enviado desde NegocioFlow`);
     window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank", "noopener,noreferrer");
@@ -257,6 +276,14 @@ export default function Dashboard({
         <div>
           <h1 className="text-xl font-bold mb-1">Hola 👋</h1>
           <p className="text-sm text-muted">Así va {business.name} hoy.</p>
+          <button
+            onClick={() => setShowTypeModal(true)}
+            className="mt-2 inline-flex items-center gap-1.5 text-xs border border-line bg-white rounded-full px-2.5 py-1 text-muted hover:text-ink"
+            title="Cambiar el tipo de negocio"
+          >
+            <span aria-hidden>{profile.emoji}</span> {profile.label}
+            <Pencil size={11} />
+          </button>
         </div>
         <button
           onClick={shareToday}
@@ -339,7 +366,9 @@ export default function Dashboard({
                 }
               />
             )}
-            {s.top_product && <Alert text={`${s.top_product.name} es tu producto más rentable este mes.`} positive />}
+            {s.top_product && (
+              <Alert text={`${s.top_product.name} es tu ${profile.itemSingular} más rentable este mes.`} positive />
+            )}
           </div>
         )
       ) : (
@@ -349,7 +378,7 @@ export default function Dashboard({
             className="flex items-center gap-2 text-sm px-3 py-2.5 rounded-lg border border-amber-100 bg-amber-50 text-amber-700 mb-6 w-full text-left"
           >
             <Lock size={14} className="flex-shrink-0" />
-            Tienes productos con stock bajo o agotado. Las alertas detalladas son una función Pro.
+            Tienes {profile.itemPlural} con stock bajo o agotado. Las alertas detalladas son una función Pro.
           </button>
         )
       )}
@@ -357,10 +386,29 @@ export default function Dashboard({
       {/* hoy */}
       <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Hoy</div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-        <StatCard label="Ventas" value={fmtCLP(s.today_sales)} />
-        <StatCard label="Gastos" value={fmtCLP(todayExpenses)} />
-        <StatCard label="Ganancia estimada" value={fmtCLP(todayProfit)} highlight />
-        <StatCard label="N° de ventas" value={String(s.today_count)} />
+        <StatCard
+          label="Ganancia estimada"
+          value={fmtCLP(todayProfit)}
+          highlight
+          sub={todayExpenses > 0 ? `después de ${fmtCLP(todayExpenses)} en gastos` : undefined}
+        />
+        <StatCard label={terms.sales} value={fmtCLP(s.today_sales)} />
+        {profile.kpiMode === "retail" && business.has_inventory ? (
+          <StatCard
+            label="Stock bajo"
+            value={String(s.low_stock + s.out_of_stock)}
+            sub={s.out_of_stock > 0 ? `${s.out_of_stock} agotado(s)` : `${profile.itemPlural} por reponer`}
+            warn={s.low_stock + s.out_of_stock > 0}
+          />
+        ) : (
+          <StatCard label={terms.count} value={String(s.today_count)} />
+        )}
+        <StatCard
+          label={terms.top}
+          value={s.today_top_sold ? s.today_top_sold.name : "—"}
+          sub={s.today_top_sold ? `${fmtQty(s.today_top_sold.qty)} hoy` : `Aún sin ${terms.sales.toLowerCase()} hoy`}
+          small
+        />
       </div>
 
       {/* últimos 14 días */}
@@ -423,6 +471,16 @@ export default function Dashboard({
         <span>
           Margen: <strong className="text-ink">{margin.toFixed(1).replace(".", ",")}%</strong>
         </span>
+        {s.month_top_sold && (
+          <span>
+            {terms.topMonth}: <strong className="text-ink">{s.month_top_sold.name}</strong>
+          </span>
+        )}
+        {s.month_top_category && (
+          <span>
+            Categoría estrella: <strong className="text-ink">{s.month_top_category.name}</strong>
+          </span>
+        )}
         {salesChange !== null && (
           <span
             className={`flex items-center gap-1 ${salesChange >= 0 ? "text-brand-600" : "text-red-600"}`}
@@ -541,15 +599,165 @@ export default function Dashboard({
           El punto de equilibrio mensual es una función Pro.
         </button>
       )}
+
+      {showTypeModal && (
+        <BusinessTypeModal
+          business={business}
+          onClose={() => setShowTypeModal(false)}
+          onSaved={(b) => {
+            setShowTypeModal(false);
+            onBusinessUpdated?.(b);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function StatCard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+// Textos del inicio según el rubro.
+function kpiTerms(profile: BusinessProfile) {
+  if (profile.kpiMode === "services") {
+    return {
+      sales: "Ingresos",
+      count: "Clientes atendidos",
+      top: profile.id === "peluqueria" ? "Servicio más pedido" : `${profile.itemSingular === "servicio" ? "Servicio" : "Producto"} más vendido`,
+      topMonth: "Más pedido del mes",
+    };
+  }
+  if (profile.kpiMode === "food") {
+    return { sales: "Ventas", count: "Pedidos", top: "Lo más pedido", topMonth: "Lo más pedido del mes" };
+  }
+  return { sales: "Ventas", count: "N° de ventas", top: "Más vendido", topMonth: "Más vendido del mes" };
+}
+
+function fmtQty(n: number): string {
+  const v = Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "").replace(".", ",");
+  return `${v} ${n === 1 ? "unidad" : "unidades"}`;
+}
+
+function StatCard({
+  label,
+  value,
+  highlight,
+  sub,
+  small,
+  warn,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  sub?: string;
+  small?: boolean;
+  warn?: boolean;
+}) {
   return (
-    <div className="bg-white border border-line rounded-xl p-4">
+    <div className="bg-white border border-line rounded-xl p-4 min-w-0">
       <div className="text-xs text-muted">{label}</div>
-      <div className={`text-lg font-bold mt-1 ${highlight ? "text-brand-600" : "text-ink"}`}>{value}</div>
+      <div
+        className={`font-bold mt-1 truncate ${small ? "text-base" : "text-lg"} ${
+          highlight ? "text-brand-600" : warn ? "text-amber-700" : "text-ink"
+        }`}
+        title={value}
+      >
+        {value}
+      </div>
+      {sub && <div className="text-[11px] text-muted mt-0.5 truncate">{sub}</div>}
+    </div>
+  );
+}
+
+// Cambiar el rubro después del registro.
+function BusinessTypeModal({
+  business,
+  onClose,
+  onSaved,
+}: {
+  business: Business;
+  onClose: () => void;
+  onSaved: (b: Business) => void;
+}) {
+  const current = getProfile(business);
+  const [value, setValue] = useState<BusinessTypeValue>({
+    type: current.id,
+    description: business.business_description || "",
+  });
+  const [hasInventory, setHasInventory] = useState(business.has_inventory);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEscape(onClose);
+
+  function change(v: BusinessTypeValue) {
+    setValue(v);
+    setHasInventory(getProfile({ business_type: v.type, business_description: v.description }).hasInventory);
+    setError("");
+  }
+
+  async function save() {
+    if (value.type === "otro" && value.description.trim().length < 3) {
+      return setError("Cuéntanos en pocas palabras qué hace tu negocio, o elige uno de la lista.");
+    }
+    const patch = {
+      business_type: value.type,
+      business_description: value.type === "otro" ? value.description.trim().slice(0, 200) : null,
+      has_inventory: hasInventory,
+    };
+    setSaving(true);
+    setError("");
+    const { error: err } = await supabase.from("businesses").update(patch).eq("id", business.id);
+    setSaving(false);
+    if (err) return setError(friendlyDbError(err.message));
+    onSaved({ ...business, ...patch });
+  }
+
+  const preview = getProfile({ business_type: value.type, business_description: value.description });
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Tipo de negocio"
+        className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-1">
+          <div className="font-bold text-lg">Tipo de negocio</div>
+          <button onClick={onClose} aria-label="Cerrar" className="text-muted">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="text-xs text-muted mb-4">
+          Cambia los textos, las categorías sugeridas y lo que ves en el inicio. Tus datos no se modifican.
+        </p>
+        <BusinessTypePicker value={value} onChange={change} />
+        <label className="flex items-start gap-2 mt-4 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={hasInventory}
+            onChange={(e) => setHasInventory(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            Llevar control de stock
+            <span className="block text-xs text-muted">
+              Avisos de {preview.itemPlural} agotados o por reponer.
+            </span>
+          </span>
+        </label>
+        {error && (
+          <div role="alert" className="text-sm text-red-600 mt-3">
+            {error}
+          </div>
+        )}
+        <button
+          onClick={save}
+          disabled={saving}
+          className="mt-4 w-full flex items-center justify-center gap-2 bg-brand-500 text-white text-sm font-semibold py-2.5 rounded-lg disabled:opacity-60"
+        >
+          {saving && <Loader2 size={14} className="animate-spin" />}
+          Guardar
+        </button>
+      </div>
     </div>
   );
 }

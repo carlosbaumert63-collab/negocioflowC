@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { Lock, FileSpreadsheet, FileText, Loader2, RefreshCw } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, type Business } from "../lib/types";
+import { getProfile, cap } from "../lib/businessProfiles";
 import { exportSalesCSV, exportExpensesCSV, exportProductsCSV, exportMonthlyPDF } from "../lib/export";
 import { localISODate, daysAgo, monthRange, formatDateCL } from "../lib/dates";
 import { friendlyDbError } from "../lib/plan";
@@ -52,6 +53,7 @@ function compactCLP(n: number): string {
 }
 
 function ReportesInner({ business }: { business: Business }) {
+  const profile = getProfile(business);
   const { isPro } = usePlan();
   const [range, setRange] = useState<RangeKey>("month");
   const [exporting, setExporting] = useState<string | null>(null);
@@ -206,13 +208,13 @@ function ReportesInner({ business }: { business: Business }) {
               )}
             </Card>
 
-            <Card title="Productos más rentables">
+            <Card title={`${cap(profile.itemPlural)} más rentables`}>
               {report.top_products.length === 0 ? (
                 <EmptyChart />
               ) : (
                 <div className="space-y-2.5">
                   <div className="flex justify-between text-[11px] text-muted uppercase tracking-wide">
-                    <span>Producto</span>
+                    <span>{cap(profile.itemSingular)}</span>
                     <span>Vendido · Ganancia</span>
                   </div>
                   {report.top_products.map((p) => (

@@ -11,6 +11,7 @@ import {
   Wallet,
   LineChart,
 } from "lucide-react";
+import { PROFILES, PROFILE_ORDER } from "../lib/businessProfiles";
 
 const FEATURES = [
   {
@@ -174,6 +175,24 @@ export default function Landing({
         </div>
         <div className="text-center text-xs text-muted mt-2">
           Ejemplo ilustrativo — los resultados reales dependen de tu negocio.
+        </div>
+      </div>
+
+      {/* rubros */}
+      <div className="max-w-3xl mx-auto px-6 pt-14 text-center">
+        <h2 className="text-2xl font-bold">Hecha para tu tipo de negocio</h2>
+        <p className="text-sm text-muted mt-2 max-w-xl mx-auto">
+          Elige tu rubro y NegocioFlow se adapta: categorías, textos e indicadores pensados para lo que tú vendes.
+        </p>
+        <div className="flex flex-wrap justify-center gap-2 mt-5">
+          {PROFILE_ORDER.filter((id) => id !== "otro").map((id) => (
+            <span key={id} className="inline-flex items-center gap-1.5 text-sm border border-line rounded-full px-3 py-1.5">
+              <span aria-hidden>{PROFILES[id].emoji}</span> {PROFILES[id].label}
+            </span>
+          ))}
+          <span className="inline-flex items-center gap-1.5 text-sm border border-dashed border-line rounded-full px-3 py-1.5 text-muted">
+            …o cuéntanos qué haces
+          </span>
         </div>
       </div>
 

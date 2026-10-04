@@ -5,10 +5,15 @@ import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, type Business, type Product } from "../lib/types";
 import { friendlyDbError } from "../lib/plan";
 import { parseCLP, parseQty, toInputNumber } from "../lib/numbers";
+import { getProfile, cap } from "../lib/businessProfiles";
 
 const EMPTY_FORM = { name: "", sku: "", category: "", sale_price: "", cost: "", stock: "", min_stock: "" };
 
 export default function Productos({ business }: { business: Business }) {
+  const profile = getProfile(business);
+  const item = profile.itemSingular; // "producto" | "servicio"
+  const items = profile.itemPlural;
+  const tracksStock = business.has_inventory;
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -45,9 +50,16 @@ export default function Productos({ business }: { business: Business }) {
     return Array.from(set).sort();
   }, [products]);
 
+  // Sugerencias del rubro + las que ya usa el negocio.
+  const categoryOptions = useMemo(
+    () => Array.from(new Set([...categories, ...profile.categories])),
+    [categories, profile.categories]
+  );
+
   const lowStock = useMemo(
-    () => products.filter((p) => Number(p.stock) <= 0 || Number(p.stock) <= Number(p.min_stock)),
-    [products]
+    () =>
+      tracksStock ? products.filter((p) => Number(p.stock) <= 0 || Number(p.stock) <= Number(p.min_stock)) : [],
+    [products, tracksStock]
   );
 
   const filtered = useMemo(() => {
@@ -59,7 +71,7 @@ export default function Productos({ business }: { business: Business }) {
         (p.sku || "").toLowerCase().includes(q) ||
         (p.category || "").toLowerCase().includes(q);
       const matchesCategory = !categoryFilter || p.category === categoryFilter;
-      const matchesLow = !onlyLow || Number(p.stock) <= 0 || Number(p.stock) <= Number(p.min_stock);
+      const matchesLow = !onlyLow || !tracksStock || Number(p.stock) <= 0 || Number(p.stock) <= Number(p.min_stock);
       return matchesQuery && matchesCategory && matchesLow;
     });
   }, [products, query, categoryFilter, onlyLow]);
@@ -93,7 +105,7 @@ export default function Productos({ business }: { business: Business }) {
   const saveProduct = async () => {
     if (saving) return;
     setError("");
-    if (!form.name.trim()) return setError("Ingresa el nombre del producto.");
+    if (!form.name.trim()) return setError(`Ingresa el nombre del ${item}.`);
     // Un campo con texto que no es número se avisa; nunca se guarda 0 en silencio.
     const salePrice = parseCLP(form.sale_price);
     if (form.sale_price.trim() === "") return setError("Ingresa el precio de venta.");
@@ -123,7 +135,8 @@ export default function Productos({ business }: { business: Business }) {
     // Al editar, el stock solo se envía si el usuario lo cambió. Si no, se
     // pisaría con el valor de cuando se abrió el formulario y se perderían
     // las ventas hechas mientras tanto (el stock lo mueven ventas y compras).
-    if (!editingId || form.stock.trim() !== originalStock) payload.stock = stock;
+    // Sin control de stock, el campo no se muestra y el stock no se toca.
+    if (tracksStock && (!editingId || form.stock.trim() !== originalStock)) payload.stock = stock;
 
     setSaving(true);
     const { error: err } = editingId
@@ -158,7 +171,7 @@ export default function Productos({ business }: { business: Business }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-5 gap-2 flex-wrap">
-        <h1 className="text-xl font-bold">Productos</h1>
+        <h1 className="text-xl font-bold">{profile.navLabel}</h1>
         <div className="flex items-center gap-2">
           {lowStock.length > 0 && (
             <button
@@ -173,14 +186,14 @@ export default function Productos({ business }: { business: Business }) {
             className="flex items-center gap-1.5 bg-brand-500 text-white text-sm font-semibold px-4 py-2 rounded-lg"
           >
             {showForm ? <X size={16} /> : <Plus size={16} />}
-            {showForm ? "Cerrar" : "Nuevo producto"}
+            {showForm ? "Cerrar" : `Nuevo ${item}`}
           </button>
         </div>
       </div>
 
       {showForm && (
         <div className="bg-white border border-line rounded-xl p-5 mb-6">
-          <div className="text-sm font-semibold mb-3">{editingId ? "Editar producto" : "Nuevo producto"}</div>
+          <div className="text-sm font-semibold mb-3">{editingId ? `Editar ${item}` : `Nuevo ${item}`}</div>
           <div className="grid sm:grid-cols-2 gap-4">
             <FormField label="Nombre" id="prod-nombre">
               <input id="prod-nombre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} />
@@ -195,10 +208,10 @@ export default function Productos({ business }: { business: Business }) {
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
                 className={inputCls}
                 list="category-options"
-                placeholder="Ej. Bebidas, Aseo…"
+                placeholder={profile.categoryPlaceholder}
               />
               <datalist id="category-options">
-                {categories.map((c) => (
+                {categoryOptions.map((c) => (
                   <option key={c} value={c} />
                 ))}
               </datalist>
@@ -209,13 +222,34 @@ export default function Productos({ business }: { business: Business }) {
             <FormField label="Costo" id="prod-costo">
               <input id="prod-costo" inputMode="numeric" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="Lo que te cuesta a ti" className={inputCls} />
             </FormField>
-            <FormField label="Stock actual" id="prod-stock">
-              <input id="prod-stock" inputMode="decimal" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className={inputCls} />
-            </FormField>
-            <FormField label="Stock mínimo (para avisarte)" id="prod-min">
-              <input id="prod-min" inputMode="decimal" value={form.min_stock} onChange={(e) => setForm({ ...form, min_stock: e.target.value })} className={inputCls} />
-            </FormField>
+            {tracksStock && (
+              <>
+                <FormField label="Stock actual" id="prod-stock">
+                  <input id="prod-stock" inputMode="decimal" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className={inputCls} />
+                </FormField>
+                <FormField label="Stock mínimo (para avisarte)" id="prod-min">
+                  <input id="prod-min" inputMode="decimal" value={form.min_stock} onChange={(e) => setForm({ ...form, min_stock: e.target.value })} className={inputCls} />
+                </FormField>
+              </>
+            )}
           </div>
+          {!editingId && categories.length === 0 && (
+            <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-muted">Categorías sugeridas:</span>
+              {profile.categories.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setForm({ ...form, category: c })}
+                  className={`text-xs px-2.5 py-1 rounded-full border ${
+                    form.category === c ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-muted"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
           {(() => {
             const sp = parseCLP(form.sale_price);
             const c = parseCLP(form.cost) ?? 0;
@@ -223,7 +257,7 @@ export default function Productos({ business }: { business: Business }) {
               const m = ((sp - c) / sp) * 100;
               return (
                 <div className={`text-xs mt-3 ${m < 0 ? "text-red-600" : "text-muted"}`}>
-                  Ganas {fmtCLP(sp - c)} por unidad (margen {m.toFixed(0)}%).
+                  Ganas {fmtCLP(sp - c)} por {item === "servicio" ? "servicio" : "unidad"} (margen {m.toFixed(0)}%).
                 </div>
               );
             }
@@ -236,7 +270,7 @@ export default function Productos({ business }: { business: Business }) {
             className="mt-4 flex items-center gap-2 bg-brand-500 text-white text-sm font-semibold px-5 py-2 rounded-lg disabled:opacity-60"
           >
             {saving && <Loader2 size={14} className="animate-spin" />}
-            {editingId ? "Guardar cambios" : "Guardar producto"}
+            {editingId ? "Guardar cambios" : `Guardar ${item}`}
           </button>
         </div>
       )}
@@ -248,7 +282,7 @@ export default function Productos({ business }: { business: Business }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar por nombre, código o categoría…"
-            aria-label="Buscar productos"
+            aria-label={`Buscar ${items}`}
             className="w-full pl-9 pr-3 py-2 border border-line rounded-lg text-sm"
           />
         </div>
@@ -299,7 +333,17 @@ export default function Productos({ business }: { business: Business }) {
         <div className="text-sm text-muted py-8 text-center">Cargando…</div>
       ) : filtered.length === 0 ? (
         <div className="text-sm text-muted py-8 text-center">
-          {products.length === 0 ? "Aún no tienes productos registrados." : "Sin resultados para esa búsqueda."}
+          {products.length === 0 ? (
+            <>
+              Aún no tienes {items} registrados.{" "}
+              <button onClick={openNew} className="underline text-ink">
+                {cap(`agrega tu primer ${item}`)}
+              </button>
+              .
+            </>
+          ) : (
+            "Sin resultados para esa búsqueda."
+          )}
         </div>
       ) : (
         <div className="bg-white border border-line rounded-xl overflow-hidden">
@@ -316,12 +360,13 @@ export default function Productos({ business }: { business: Business }) {
                   </div>
                   <div className="text-xs text-muted mt-0.5">
                     {fmtCLP(price)} · costo {fmtCLP(p.cost)} ·{" "}
-                    <span className={margin < 0 ? "text-red-600" : ""}>margen {margin.toFixed(0)}%</span> · stock{" "}
-                    {Number(p.stock)}
+                    <span className={margin < 0 ? "text-red-600" : ""}>margen {margin.toFixed(0)}%</span>
+                    {tracksStock && <> · stock {Number(p.stock)}</>}
+                    {p.category && <> · {p.category}</>}
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  {stockBadge(p)}
+                  {tracksStock && stockBadge(p)}
                   <button onClick={() => openEdit(p)} className="text-muted hover:text-ink" aria-label={`Editar ${p.name}`}>
                     <Pencil size={15} />
                   </button>

@@ -3,6 +3,30 @@ import InstallBanner from "../components/InstallBanner";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://negocioflow.vercel.app";
 
+
+const JSON_LD = JSON.stringify({
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${SITE}/#website`,
+      name: "NegocioFlow",
+      alternateName: ["Negocio Flow"],
+      url: `${SITE}/`,
+      inLanguage: "es-CL",
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: "NegocioFlow",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web, Android, iOS",
+      url: `${SITE}/`,
+      description: "Registra tus ventas, controla tus gastos y descubre dónde está realmente tu dinero.",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "CLP" },
+    },
+  ],
+});
+
 export const metadata = {
   metadataBase: new URL(SITE),
   alternates: { canonical: "/" },
@@ -49,6 +73,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body style={{ fontFamily: "'Inter', -apple-system, sans-serif", margin: 0 }}>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON_LD }} />
         {children}
         <InstallBanner />
         <script

@@ -1,17 +1,13 @@
 import { supabase } from "./supabaseClient";
 import { daysAgo } from "./dates";
+import { PROFILES, type BusinessProfile } from "./businessProfiles";
 
 // Datos de demostración: siempre marcados con is_demo = true, para que se
 // puedan distinguir claramente de los datos reales del negocio y borrarse
 // en bloque sin tocar nada que el usuario haya cargado de verdad.
 
-const DEMO_PRODUCTS = [
-  { name: "Coca-Cola 1.5L (DEMO)", category: "Bebidas", sale_price: 1800, cost: 1100, stock: 24, min_stock: 10 },
-  { name: "Pan hallulla (DEMO)", category: "Panadería", sale_price: 1500, cost: 700, stock: 8, min_stock: 10 },
-  { name: "Chocolate (DEMO)", category: "Snacks", sale_price: 1000, cost: 550, stock: 40, min_stock: 15 },
-  { name: "Detergente 1kg (DEMO)", category: "Aseo", sale_price: 4200, cost: 2800, stock: 3, min_stock: 5 },
-  { name: "Café molido 250g (DEMO)", category: "Abarrotes", sale_price: 3500, cost: 2100, stock: 18, min_stock: 6 },
-];
+// Los productos de demostración dependen del rubro (ver businessProfiles.ts):
+// una botillería ve cervezas y vinos; una peluquería, cortes y tinturas.
 
 const PAYMENT_METHODS = ["efectivo", "débito", "crédito", "transferencia"];
 const EXPENSE_SAMPLES: { description: string; category: string; amount: number }[] = [
@@ -26,16 +22,21 @@ function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-export async function seedDemoData(businessId: string): Promise<{ error?: string }> {
+export async function seedDemoData(
+  businessId: string,
+  profile: BusinessProfile = PROFILES.almacen
+): Promise<{ error?: string }> {
   // 1) Productos demo
   const { data: products, error: prodErr } = await supabase
     .from("products")
-    .insert(DEMO_PRODUCTS.map((p) => ({ ...p, business_id: businessId, is_demo: true })))
+    .insert(profile.demoItems.map((p) => ({ ...p, business_id: businessId, is_demo: true })))
     .select();
   if (prodErr) return { error: prodErr.message };
 
   // 2) Ventas demo, repartidas en los últimos 30 días. Las cantidades
   // respetan el stock disponible para que ningún producto quede negativo.
+  // Los servicios (stock 0) no tienen tope de cantidad.
+  const tracksStock = new Set<string>((products || []).filter((p: any) => Number(p.stock) > 0).map((p: any) => p.id));
   const stockLeft = new Map<string, number>((products || []).map((p: any) => [p.id, Number(p.stock)]));
   for (let i = 0; i < 18; i++) {
     const date = daysAgo(randInt(0, 29));
@@ -48,8 +49,8 @@ export async function seedDemoData(businessId: string): Promise<{ error?: string
 
     const items = Array.from(chosen.values())
       .map((p) => {
-        const available = stockLeft.get(p.id) || 0;
-        const quantity = Math.min(randInt(1, 3), available);
+        const wanted = randInt(1, 3);
+        const quantity = tracksStock.has(p.id) ? Math.min(wanted, stockLeft.get(p.id) || 0) : wanted;
         return {
           product_id: p.id,
           product_name: p.name,
