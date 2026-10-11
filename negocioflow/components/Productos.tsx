@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, X, Trash2, Pencil, Search, ClipboardList, Share2, Copy, Check, Loader2 } from "lucide-react";
+import { Plus, X, Trash2, Pencil, Search, ClipboardList, Share2, Copy, Check, Loader2, ScanBarcode } from "lucide-react";
+import BarcodeScanner from "./BarcodeScanner";
 import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, type Business, type Product } from "../lib/types";
 import { friendlyDbError } from "../lib/plan";
@@ -28,6 +29,7 @@ export default function Productos({ business }: { business: Business }) {
   const tracksStock = business.has_inventory;
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [scanningSku, setScanningSku] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [originalStock, setOriginalStock] = useState<string>("");
@@ -165,6 +167,9 @@ export default function Productos({ business }: { business: Business }) {
     const minStock = form.min_stock.trim() === "" ? 0 : parseQty(form.min_stock);
     if (minStock === null) return setError("El stock mínimo no es un número válido.");
     if (minStock < 0) return setError("El stock mínimo no puede ser negativo.");
+    const sku = form.sku.trim();
+    const dup = sku ? products.find((p) => p.id !== editingId && (p.sku || "").trim().toLowerCase() === sku.toLowerCase()) : undefined;
+    if (dup) return setError(`El código ${sku} ya lo tiene "${dup.name}". Cada ${item} necesita un código distinto para que el escáner sepa cuál es.`);
     if (salePrice > 0 && cost > salePrice && !confirm("El costo es mayor que el precio de venta: perderás plata con cada venta. ¿Guardar igual?")) {
       return;
     }
@@ -248,7 +253,35 @@ export default function Productos({ business }: { business: Business }) {
               <input id="prod-nombre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} />
             </FormField>
             <FormField label="Código / SKU (opcional)" id="prod-sku">
-              <input id="prod-sku" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} className={inputCls} />
+              <div className="relative">
+                <input
+                  id="prod-sku"
+                  value={form.sku}
+                  onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                  onKeyDown={(e) => {
+                    // El lector de barras USB termina con Enter: que no haga nada más.
+                    if (e.key === "Enter") e.preventDefault();
+                  }}
+                  placeholder="Escanéalo o escríbelo"
+                  className={`${inputCls} pr-11`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setScanningSku(true)}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-2 rounded-md text-brand-700 hover:bg-surface"
+                  aria-label="Escanear el código con la cámara"
+                  title="Escanear con la cámara"
+                >
+                  <ScanBarcode size={18} />
+                </button>
+              </div>
+              {scanningSku && (
+                <BarcodeScanner
+                  title="Escanear código del producto"
+                  onDetected={(code) => setForm((f) => ({ ...f, sku: code }))}
+                  onClose={() => setScanningSku(false)}
+                />
+              )}
             </FormField>
             <FormField label="Categoría" id="prod-cat">
               <input

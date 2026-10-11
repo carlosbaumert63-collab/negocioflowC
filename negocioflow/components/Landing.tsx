@@ -11,7 +11,7 @@ import {
   Wallet,
   LineChart,
 } from "lucide-react";
-import { PROFILES, PROFILE_ORDER } from "../lib/businessProfiles";
+import { PROFILES, PROFILE_ORDER, EXTRA_PROFILE_ORDER } from "../lib/businessProfiles";
 
 const FEATURES = [
   {
@@ -190,6 +190,9 @@ export default function Landing({
               <span aria-hidden>{PROFILES[id].emoji}</span> {PROFILES[id].label}
             </span>
           ))}
+          <span className="inline-flex items-center gap-1.5 text-sm border border-dashed border-line rounded-full px-3 py-1.5 text-muted">
+            +{EXTRA_PROFILE_ORDER.length} rubros más: {EXTRA_PROFILE_ORDER.slice(0, 4).map((id) => PROFILES[id].emoji).join(" ")}…
+          </span>
           <span className="inline-flex items-center gap-1.5 text-sm border border-dashed border-line rounded-full px-3 py-1.5 text-muted">
             …o cuéntanos qué haces
           </span>

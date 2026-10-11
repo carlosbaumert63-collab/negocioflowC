@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Minus, X, Trash2, Search, Pencil, Undo2, Receipt, Loader2, FileDown } from "lucide-react";
+import { Plus, Minus, X, Trash2, Search, Pencil, Undo2, Receipt, Loader2, FileDown, ScanBarcode } from "lucide-react";
+import BarcodeScanner, { type ScanFeedback } from "./BarcodeScanner";
 import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, PAYMENT_METHODS, type Business, type Product, type Sale, type SaleItem, type Customer } from "../lib/types";
 import { getProfile } from "../lib/businessProfiles";
@@ -296,15 +297,16 @@ function NuevaVentaModal({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [scanning, setScanning] = useState(false);
 
-  // Cerrar con Escape (si no se está guardando).
+  // Cerrar con Escape (si no se está guardando ni está abierto el lector).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !saving) onClose();
+      if (e.key === "Escape" && !saving && !scanning) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, saving]);
+  }, [onClose, saving, scanning]);
 
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -330,7 +332,25 @@ function NuevaVentaModal({
     return Number(product.stock) + original;
   }
 
-  function addProduct(product: Product) {
+  /** Producto cuyo código coincide exacto (lector de barras o cámara). */
+  function findByCode(code: string): Product | undefined {
+    const c = code.trim().toLowerCase();
+    if (!c) return undefined;
+    return products.find((p) => (p.sku || "").trim().toLowerCase() === c);
+  }
+
+  function handleScan(code: string): ScanFeedback {
+    const product = findByCode(code);
+    if (!product) {
+      return { ok: false, text: `El código ${code} no está asignado a ningún ${item}. Agrégalo en "${profile.navLabel}".` };
+    }
+    addProduct(product, false);
+    const already = items.find((i) => i.product_id === product.id);
+    const qty = (already?.quantity || 0) + 1;
+    return { ok: true, text: `✓ ${product.name}${qty > 1 ? ` (x${qty})` : ""} · ${fmtCLP(product.sale_price)}` };
+  }
+
+  function addProduct(product: Product, focusSearch = true) {
     setError("");
     setItems((prev) => {
       const existing = prev.find((i) => i.product_id === product.id);
@@ -349,7 +369,7 @@ function NuevaVentaModal({
       ];
     });
     setSearch("");
-    searchRef.current?.focus();
+    if (focusSearch) searchRef.current?.focus();
   }
 
   // Con los botones +/− y el basurero, una cantidad 0 quita el producto. Al
@@ -439,17 +459,44 @@ function NuevaVentaModal({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && matches.length > 0 && search.trim()) {
-                    e.preventDefault();
-                    addProduct(matches[0]);
+                  if (e.key !== "Enter" || !search.trim()) return;
+                  e.preventDefault();
+                  // Un lector de barras USB/Bluetooth "escribe" el código y
+                  // presiona Enter: primero se busca el código exacto.
+                  const exact = findByCode(search);
+                  if (exact) return addProduct(exact);
+                  // Un código largo de solo números que no existe no se
+                  // confunde con otro producto que lo contenga.
+                  if (/^\d{6,}$/.test(search.trim())) {
+                    setError(`El código ${search.trim()} no está asignado a ningún ${item}. Agrégalo en "${profile.navLabel}".`);
+                    setSearch("");
+                    return;
                   }
+                  if (matches.length > 0) addProduct(matches[0]);
                 }}
                 placeholder={`Buscar ${item} por nombre, código o categoría…`}
                 aria-label={`Buscar ${item}`}
                 autoFocus={!isEditing}
-                className="w-full pl-9 pr-3 py-2.5 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="w-full pl-9 pr-12 py-2.5 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
+              <button
+                type="button"
+                onClick={() => setScanning(true)}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 rounded-md text-brand-700 hover:bg-surface"
+                aria-label="Escanear código de barras con la cámara"
+                title="Escanear con la cámara"
+              >
+                <ScanBarcode size={18} />
+              </button>
             </div>
+            {scanning && (
+              <BarcodeScanner
+                title="Escanear productos"
+                continuous
+                onDetected={handleScan}
+                onClose={() => setScanning(false)}
+              />
+            )}
 
             <div className="border border-line rounded-lg max-h-44 overflow-y-auto mb-4 divide-y divide-line">
               {matches.length === 0 ? (

@@ -23,6 +23,7 @@ import {
   Scissors,
   UtensilsCrossed,
   Briefcase,
+  Wrench,
 } from "lucide-react";
 import { getProfile } from "../lib/businessProfiles";
 import { supabase } from "../lib/supabaseClient";
@@ -132,13 +133,9 @@ function AppShellInner({
   // La sección de productos toma el nombre del rubro: "Servicios", "Carta"…
   const profile = getProfile(business);
   const itemsIcon =
-    profile.id === "peluqueria" || (profile.kpiMode === "services" && profile.emoji === "💅")
-      ? Scissors
-      : profile.kpiMode === "food"
-      ? UtensilsCrossed
-      : profile.kpiMode === "services"
-      ? Briefcase
-      : Package;
+    { scissors: Scissors, utensils: UtensilsCrossed, briefcase: Briefcase, wrench: Wrench, package: Package }[
+      profile.navIcon || "package"
+    ] || Package;
   const mainTabsAll = MAIN_TABS.map((t) => (t.key === "productos" ? { ...t, label: profile.navLabel, icon: itemsIcon } : t));
   const mainTabs = isOwner ? mainTabsAll : mainTabsAll.filter((t) => !t.ownerOnly);
   const moreTabs = isOwner ? MORE_TABS : MORE_TABS.filter((t) => !t.ownerOnly);

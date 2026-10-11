@@ -1,6 +1,14 @@
 "use client";
-import React from "react";
-import { PROFILES, PROFILE_ORDER, getProfile, matchDescription, type ProfileId } from "../lib/businessProfiles";
+import React, { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import {
+  PROFILES,
+  PROFILE_ORDER,
+  EXTRA_PROFILE_ORDER,
+  getProfile,
+  matchDescription,
+  type ProfileId,
+} from "../lib/businessProfiles";
 
 export interface BusinessTypeValue {
   type: ProfileId;
@@ -18,13 +26,17 @@ export default function BusinessTypePicker({
   /** Enfocar el campo "Cuéntanos qué haces" al elegir "Otro" (solo en el registro). */
   autoFocusDescription?: boolean;
 }) {
+  // Los rubros adicionales se muestran al pedirlos (o si ya hay uno elegido).
+  const [showMore, setShowMore] = useState(EXTRA_PROFILE_ORDER.includes(value.type));
+  const mainIds = PROFILE_ORDER.filter((id) => id !== "otro");
+  const visible: ProfileId[] = [...mainIds, ...(showMore ? EXTRA_PROFILE_ORDER : []), "otro"];
   const preview = value.type === "otro" ? getProfile({ business_type: "otro", business_description: value.description }) : null;
   const matched = value.type === "otro" && !!matchDescription(value.description);
 
   return (
     <div>
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="Tipo de negocio">
-        {PROFILE_ORDER.map((id) => {
+        {visible.map((id) => {
           const p = PROFILES[id];
           const selected = value.type === id;
           return (
@@ -48,6 +60,16 @@ export default function BusinessTypePicker({
           );
         })}
       </div>
+
+      {!showMore && (
+        <button
+          type="button"
+          onClick={() => setShowMore(true)}
+          className="mt-2 w-full flex items-center justify-center gap-1 text-sm text-brand-700 font-medium py-2 rounded-lg border border-dashed border-line hover:bg-surface"
+        >
+          Ver más rubros ({EXTRA_PROFILE_ORDER.length}) <ChevronDown size={14} />
+        </button>
+      )}
 
       {value.type === "otro" && (
         <div className="mt-4">
