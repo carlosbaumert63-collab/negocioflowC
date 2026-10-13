@@ -327,7 +327,7 @@ export default function Landing({
             carlosbaumert63@gmail.com
           </a>
         </div>
-        <div className="text-[11px] text-muted/80">[COMPLETAR: nombre completo y RUT del responsable] · Temuco, Chile</div>
+        <div className="text-[11px] text-muted/80">Carlos Baumert · RUT 24.058.539-1 · Temuco, Chile</div>
       </div>
     </div>
   );

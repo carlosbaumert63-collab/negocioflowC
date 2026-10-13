@@ -25,8 +25,7 @@ export default function TerminosPage() {
           <section>
             <h2 className="font-semibold mb-1.5">1. Quiénes somos</h2>
             <p>
-              NegocioFlow es un servicio operado por <strong>[COMPLETAR: nombre completo y RUT del
-              responsable]</strong>, con domicilio en <strong>Temuco, Chile</strong> y contacto
+              NegocioFlow es un servicio operado por <strong>Carlos Baumert, RUT 24.058.539-1</strong>, con domicilio en <strong>Temuco, Chile</strong> y contacto
               en <strong>carlosbaumert63@gmail.com</strong>. Si tienes dudas sobre estos términos,
               puedes escribir a ese correo.
             </p>
