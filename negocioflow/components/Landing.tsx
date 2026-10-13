@@ -12,6 +12,7 @@ import {
   LineChart,
 } from "lucide-react";
 import { PROFILES, PROFILE_ORDER, EXTRA_PROFILE_ORDER } from "../lib/businessProfiles";
+import HeroAnimated from "./HeroAnimated";
 
 const FEATURES = [
   {
@@ -141,42 +142,7 @@ export default function Landing({
         </button>
       </div>
 
-      {/* hero */}
-      <div className="max-w-3xl mx-auto text-center px-6 pt-10 pb-6">
-        <h1 className="text-4xl sm:text-5xl font-bold leading-tight">
-          Entiende cuánto <span className="text-brand-500">realmente</span> gana tu negocio.
-        </h1>
-        <p className="text-muted text-lg mt-5 max-w-xl mx-auto">
-          Registra tus ventas, controla tus gastos y descubre dónde está realmente tu dinero.
-        </p>
-        <button
-          onClick={onGetStarted}
-          className="mt-8 bg-brand-500 hover:bg-brand-600 transition text-white font-semibold px-7 py-3 rounded-xl text-base"
-        >
-          Comenzar gratis
-        </button>
-        <div className="text-xs text-muted mt-3">Sin tarjeta de crédito. Empieza en 2 minutos.</div>
-      </div>
-
-      {/* dashboard preview mockup */}
-      <div className="max-w-3xl mx-auto px-6 mt-8">
-        <div className="bg-surface border border-line rounded-2xl p-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[
-            { label: "Ventas del mes", value: "$2.450.000", color: "text-ink" },
-            { label: "Costos", value: "$1.200.000", color: "text-muted" },
-            { label: "Gastos", value: "$350.000", color: "text-muted" },
-            { label: "Ganancia neta", value: "$900.000", color: "text-brand-600" },
-          ].map((s) => (
-            <div key={s.label} className="bg-white border border-line rounded-xl p-4">
-              <div className="text-xs text-muted">{s.label}</div>
-              <div className={`text-lg font-bold mt-1 ${s.color}`}>{s.value}</div>
-            </div>
-          ))}
-        </div>
-        <div className="text-center text-xs text-muted mt-2">
-          Ejemplo ilustrativo — los resultados reales dependen de tu negocio.
-        </div>
-      </div>
+      <HeroAnimated onGetStarted={onGetStarted} />
 
       {/* rubros */}
       <div className="max-w-3xl mx-auto px-6 pt-14 text-center">
