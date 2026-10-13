@@ -11,6 +11,7 @@ import { friendlyDbError } from "../lib/plan";
 import { exportSaleReceiptPDF } from "../lib/export";
 import { usePlan } from "./PlanContext";
 import { fetchAll } from "../lib/fetchAll";
+import { lookupBarcode } from "../lib/catalog";
 
 const PAGE_SIZE = 50;
 
@@ -815,7 +816,28 @@ function QuickCreateProduct({
   const [stock, setStock] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [looking, setLooking] = useState(true);
+  const [suggested, setSuggested] = useState(false);
   const tracks = business.has_inventory && profile.hasInventory;
+  const priceRef = useRef<HTMLInputElement>(null);
+
+  // Nombre sugerido desde el catálogo compartido u Open Food Facts.
+  useEffect(() => {
+    let alive = true;
+    setLooking(true);
+    lookupBarcode(code).then((hit) => {
+      if (!alive) return;
+      setLooking(false);
+      if (hit) {
+        setName((n) => (n.trim() ? n : hit.name));
+        setSuggested(true);
+        priceRef.current?.focus();
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [code]);
 
   async function save() {
     if (busy) return;
@@ -855,11 +877,15 @@ function QuickCreateProduct({
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={`Nombre del ${profile.itemSingular}`}
+          placeholder={looking ? "Buscando el nombre…" : `Nombre del ${profile.itemSingular}`}
           aria-label="Nombre"
           className="col-span-2 px-3 py-2 border border-line rounded-lg text-sm bg-white"
         />
+        {suggested && (
+          <div className="col-span-2 text-[11px] text-brand-700 -mt-1">Nombre sugerido por el catálogo. Corrígelo si no calza.</div>
+        )}
         <input
+          ref={priceRef}
           inputMode="numeric"
           value={price}
           onChange={(e) => setPrice(e.target.value)}

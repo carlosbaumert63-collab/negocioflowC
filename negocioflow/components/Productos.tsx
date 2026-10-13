@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, X, Trash2, Pencil, Search, ClipboardList, Share2, Copy, Check, Loader2, ScanBarcode } from "lucide-react";
 import BarcodeScanner from "./BarcodeScanner";
 import { supabase } from "../lib/supabaseClient";
@@ -8,6 +8,7 @@ import { friendlyDbError } from "../lib/plan";
 import { parseCLP, parseQty, toInputNumber } from "../lib/numbers";
 import { getProfile, cap } from "../lib/businessProfiles";
 import { fetchAll } from "../lib/fetchAll";
+import { lookupBarcode } from "../lib/catalog";
 
 const EMPTY_FORM = {
   name: "",
@@ -33,6 +34,20 @@ export default function Productos({ business }: { business: Business }) {
   const [loading, setLoading] = useState(true);
   const [scanningSku, setScanningSku] = useState(false);
   const [scanningSearch, setScanningSearch] = useState(false);
+  const [nameHint, setNameHint] = useState("");
+
+  /** Con un código de barras nuevo, sugiere el nombre si el campo está vacío. */
+  async function suggestName(code: string) {
+    setNameHint("");
+    if (!/^\d{8,14}$/.test(code.trim())) return;
+    setNameHint("Buscando el nombre en el catálogo…");
+    const hit = await lookupBarcode(code);
+    if (!hit) return setNameHint("");
+    const cur = formRef.current;
+    if (cur.sku.trim() !== code.trim() || cur.name.trim()) return setNameHint("");
+    setForm((f) => (f.name.trim() ? f : { ...f, name: hit.name }));
+    setNameHint("Nombre sugerido por el catálogo. Corrígelo si no calza.");
+  }
   // Con miles de productos, dibujar toda la lista de una vez hace lenta la
   // pantalla en celulares: se muestran por tandas.
   const [shown, setShown] = useState(PAGE);
@@ -46,6 +61,9 @@ export default function Productos({ business }: { business: Business }) {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [onlyLow, setOnlyLow] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+  // Valor actual del formulario para las búsquedas asíncronas.
+  const formRef = useRef(form);
+  formRef.current = form;
   const [showRestock, setShowRestock] = useState(false);
   const [originalTracked, setOriginalTracked] = useState(true);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -115,6 +133,7 @@ export default function Productos({ business }: { business: Business }) {
     } else {
       setQuery("");
       openNew(c);
+      suggestName(c);
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -143,6 +162,7 @@ export default function Productos({ business }: { business: Business }) {
 
   function openNew(sku = "") {
     setEditingId(null);
+    setNameHint("");
     // Por defecto: un producto de almacén controla stock; un servicio o un plato no.
     setForm({ ...EMPTY_FORM, sku, track_stock: profile.hasInventory });
     setOriginalStock("");
@@ -272,6 +292,7 @@ export default function Productos({ business }: { business: Business }) {
           <div className="grid sm:grid-cols-2 gap-4">
             <FormField label="Nombre" id="prod-nombre">
               <input id="prod-nombre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} />
+              {nameHint && <div className="text-[11px] text-brand-700 mt-1">{nameHint}</div>}
             </FormField>
             <FormField label="Código / SKU (opcional)" id="prod-sku">
               <div className="relative">
@@ -279,9 +300,13 @@ export default function Productos({ business }: { business: Business }) {
                   id="prod-sku"
                   value={form.sku}
                   onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                  onBlur={() => !editingId && !form.name.trim() && suggestName(form.sku)}
                   onKeyDown={(e) => {
-                    // El lector de barras USB termina con Enter: que no haga nada más.
-                    if (e.key === "Enter") e.preventDefault();
+                    // El lector de barras USB termina con Enter: buscar el nombre y nada más.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (!editingId && !form.name.trim()) suggestName(form.sku);
+                    }
                   }}
                   placeholder="Escanéalo o escríbelo"
                   className={`${inputCls} pr-11`}
@@ -299,7 +324,10 @@ export default function Productos({ business }: { business: Business }) {
               {scanningSku && (
                 <BarcodeScanner
                   title="Escanear código del producto"
-                  onDetected={(code) => setForm((f) => ({ ...f, sku: code }))}
+                  onDetected={(code) => {
+                    setForm((f) => ({ ...f, sku: code }));
+                    if (!editingId) suggestName(code);
+                  }}
                   onClose={() => setScanningSku(false)}
                 />
               )}
