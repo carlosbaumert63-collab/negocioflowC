@@ -6,9 +6,11 @@ import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, PAYMENT_METHODS, type Business, type Product, type Sale, type SaleItem, type Customer } from "../lib/types";
 import { getProfile } from "../lib/businessProfiles";
 import { localISODate, formatDateCL } from "../lib/dates";
+import { parseCLP, parseQty } from "../lib/numbers";
 import { friendlyDbError } from "../lib/plan";
 import { exportSaleReceiptPDF } from "../lib/export";
 import { usePlan } from "./PlanContext";
+import { fetchAll } from "../lib/fetchAll";
 
 const PAGE_SIZE = 50;
 
@@ -28,6 +30,7 @@ export default function Ventas({ business }: { business: Business }) {
   const [listError, setListError] = useState("");
   const [dteBusyId, setDteBusyId] = useState<string | null>(null);
   const [dteMessage, setDteMessage] = useState<{ saleId: string; text: string; ok: boolean } | null>(null);
+  const [savedMsg, setSavedMsg] = useState("");
 
   async function handleEmitDte(sale: Sale) {
     setDteBusyId(sale.id);
@@ -66,15 +69,19 @@ export default function Ventas({ business }: { business: Business }) {
   const load = async () => {
     const [salesRes, productsRes, customersRes] = await Promise.all([
       salesQuery(0),
-      supabase.from("products").select("*").eq("business_id", business.id).order("name"),
-      supabase.from("customers").select("*").eq("business_id", business.id).order("name"),
+      fetchAll<Product>((a, b) =>
+        supabase.from("products").select("*").eq("business_id", business.id).order("name").order("id").range(a, b)
+      ),
+      fetchAll<Customer>((a, b) =>
+        supabase.from("customers").select("*").eq("business_id", business.id).order("name").order("id").range(a, b)
+      ),
     ]);
     setListError(salesRes.error ? friendlyDbError(salesRes.error.message) : "");
     const list = (salesRes.data as Sale[]) || [];
     setSales(list);
     setHasMore(list.length === PAGE_SIZE);
-    setProducts((productsRes.data as Product[]) || []);
-    setCustomers((customersRes.data as Customer[]) || []);
+    setProducts(productsRes.data);
+    setCustomers(customersRes.data);
     setLoading(false);
   };
 
@@ -138,6 +145,7 @@ export default function Ventas({ business }: { business: Business }) {
         <button
           onClick={() => {
             setEditingSale(null);
+            setSavedMsg("");
             setShowModal(true);
           }}
           className="flex items-center gap-1.5 bg-brand-500 text-white text-sm font-semibold px-4 py-2 rounded-lg"
@@ -160,6 +168,21 @@ export default function Ventas({ business }: { business: Business }) {
       )}
 
       {listError && <div className="text-sm text-red-600 mb-3">{listError}</div>}
+      {savedMsg && (
+        <div role="status" className="flex items-center justify-between gap-2 text-sm bg-brand-50 text-brand-700 border border-brand-100 rounded-lg px-3 py-2 mb-3">
+          <span>{savedMsg}</span>
+          <button
+            onClick={() => {
+              setSavedMsg("");
+              setEditingSale(null);
+              setShowModal(true);
+            }}
+            className="font-semibold underline flex-shrink-0"
+          >
+            Otra venta
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-sm text-muted py-8 text-center">Cargando…</div>
@@ -257,8 +280,10 @@ export default function Ventas({ business }: { business: Business }) {
           customers={customers}
           existingSale={editingSale}
           onClose={() => setShowModal(false)}
-          onSaved={() => {
+          onProductCreated={(p) => setProducts((prev) => [...prev, p].sort((a, b) => a.name.localeCompare(b.name, "es")))}
+          onSaved={(msg) => {
             setShowModal(false);
+            setSavedMsg(msg);
             load();
           }}
         />
@@ -274,13 +299,15 @@ function NuevaVentaModal({
   existingSale,
   onClose,
   onSaved,
+  onProductCreated,
 }: {
   business: Business;
   products: Product[];
   customers: Customer[];
   existingSale?: Sale | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (message: string) => void;
+  onProductCreated: (p: Product) => void;
 }) {
   const isEditing = !!existingSale;
   const profile = getProfile(business);
@@ -298,6 +325,9 @@ function NuevaVentaModal({
   const [saving, setSaving] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const [scanning, setScanning] = useState(false);
+  // Código escaneado que no existe: se ofrece crear el producto ahí mismo.
+  const [newCode, setNewCode] = useState<string | null>(null);
+  const [cashGiven, setCashGiven] = useState("");
 
   // Cerrar con Escape (si no se está guardando ni está abierto el lector).
   useEffect(() => {
@@ -342,7 +372,10 @@ function NuevaVentaModal({
   function handleScan(code: string): ScanFeedback {
     const product = findByCode(code);
     if (!product) {
-      return { ok: false, text: `El código ${code} no está asignado a ningún ${item}. Agrégalo en "${profile.navLabel}".` };
+      // Se cierra la cámara y se muestra el formulario para crearlo.
+      setNewCode(code.trim());
+      setScanning(false);
+      return { ok: false, text: `El código ${code} no está registrado.` };
     }
     addProduct(product, false);
     const already = items.find((i) => i.product_id === product.id);
@@ -390,6 +423,18 @@ function NuevaVentaModal({
   const discountRaw = Math.round(Number(discount) || 0);
   const discountNum = Math.min(Math.max(discountRaw, 0), subtotal);
   const total = subtotal - discountNum;
+  // Vuelto: solo para pagos en efectivo que no quedan al fiado.
+  const showCash = paymentMethod === "efectivo" && !(customerId && pendingPayment) && total > 0;
+  const cashNum = showCash ? parseCLP(cashGiven) : null;
+  const change = cashNum !== null && cashNum > 0 ? cashNum - total : null;
+  const billOptions = useMemo(() => {
+    if (total <= 0) return [] as number[];
+    const opts = new Set<number>();
+    opts.add(Math.ceil(total / 1000) * 1000);
+    for (const b of [2000, 5000, 10000, 20000]) if (b >= total) opts.add(b);
+    opts.add(Math.ceil(total / 10000) * 10000);
+    return Array.from(opts).filter((v) => v > total).sort((a, b) => a - b).slice(0, 4);
+  }, [total]);
   const today = localISODate();
 
   const finalize = async () => {
@@ -424,7 +469,8 @@ function NuevaVentaModal({
 
     setSaving(false);
     if (rpcError) return setError(friendlyDbError(rpcError.message));
-    onSaved();
+    const changeTxt = change !== null && change > 0 ? ` · vuelto ${fmtCLP(change)}` : "";
+    onSaved(isEditing ? "Venta actualizada." : `Venta de ${fmtCLP(total)} registrada${changeTxt}.`);
   };
 
   return (
@@ -468,7 +514,7 @@ function NuevaVentaModal({
                   // Un código largo de solo números que no existe no se
                   // confunde con otro producto que lo contenga.
                   if (/^\d{6,}$/.test(search.trim())) {
-                    setError(`El código ${search.trim()} no está asignado a ningún ${item}. Agrégalo en "${profile.navLabel}".`);
+                    setNewCode(search.trim());
                     setSearch("");
                     return;
                   }
@@ -489,6 +535,21 @@ function NuevaVentaModal({
                 <ScanBarcode size={18} />
               </button>
             </div>
+            {newCode && (
+              <QuickCreateProduct
+                business={business}
+                code={newCode}
+                onCancel={() => {
+                  setNewCode(null);
+                  searchRef.current?.focus();
+                }}
+                onCreated={(p) => {
+                  onProductCreated(p);
+                  addProduct(p);
+                  setNewCode(null);
+                }}
+              />
+            )}
             {scanning && (
               <BarcodeScanner
                 title="Escanear productos"
@@ -677,6 +738,44 @@ function NuevaVentaModal({
               </div>
             </div>
 
+            {showCash && !isEditing && (
+              <div className="mb-4">
+                <label className="text-xs text-muted" htmlFor="venta-paga-con">Paga con (opcional, para calcular el vuelto)</label>
+                <div className="flex gap-2 mt-1">
+                  <input
+                    id="venta-paga-con"
+                    inputMode="numeric"
+                    value={cashGiven}
+                    onChange={(e) => setCashGiven(e.target.value)}
+                    placeholder="Ej. 10.000"
+                    className="flex-1 min-w-0 px-3 py-2 border border-line rounded-lg text-sm"
+                  />
+                </div>
+                <div className="flex gap-1.5 mt-2 flex-wrap">
+                  {billOptions.map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      onClick={() => setCashGiven(String(b))}
+                      className={`text-xs px-2.5 py-1 rounded-full border ${
+                        cashNum === b ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-muted"
+                      }`}
+                    >
+                      {fmtCLP(b)}
+                    </button>
+                  ))}
+                </div>
+                {change !== null && (
+                  <div
+                    className={`mt-2 text-base font-bold ${change < 0 ? "text-red-600" : "text-brand-700"}`}
+                    aria-live="polite"
+                  >
+                    {change < 0 ? `Faltan ${fmtCLP(-change)}` : change === 0 ? "Pago exacto, sin vuelto" : `Vuelto: ${fmtCLP(change)}`}
+                  </div>
+                )}
+              </div>
+            )}
+
             {error && (
               <div role="alert" className="text-sm text-red-600 mb-3">
                 {error}
@@ -693,6 +792,107 @@ function NuevaVentaModal({
             </button>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Crear un producto al vuelo desde un código escaneado que no existe. */
+function QuickCreateProduct({
+  business,
+  code,
+  onCancel,
+  onCreated,
+}: {
+  business: Business;
+  code: string;
+  onCancel: () => void;
+  onCreated: (p: Product) => void;
+}) {
+  const profile = getProfile(business);
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [stock, setStock] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const tracks = business.has_inventory && profile.hasInventory;
+
+  async function save() {
+    if (busy) return;
+    setErr("");
+    if (!name.trim()) return setErr("Escribe el nombre.");
+    const sp = parseCLP(price);
+    if (sp === null || sp <= 0) return setErr("Escribe el precio de venta (por ejemplo 1.500).");
+    const st = stock.trim() === "" ? null : parseQty(stock);
+    if (stock.trim() !== "" && st === null) return setErr("El stock no es un número válido.");
+    setBusy(true);
+    const payload: Record<string, unknown> = {
+      business_id: business.id,
+      name: name.trim(),
+      sku: code,
+      sale_price: sp,
+      cost: 0,
+      min_stock: 0,
+    };
+    if (business.has_inventory) {
+      // Sin stock indicado, el producto se crea sin control de stock (se puede activar después).
+      payload.track_stock = tracks && st !== null;
+      if (st !== null) payload.stock = st;
+    }
+    const { data, error } = await supabase.from("products").insert(payload).select("*").single();
+    setBusy(false);
+    if (error || !data) return setErr(friendlyDbError(error?.message || "No se pudo crear."));
+    onCreated(data as Product);
+  }
+
+  return (
+    <div className="border border-amber-300 bg-amber-50 rounded-lg p-3 mb-3">
+      <div className="text-sm font-medium mb-2">
+        El código {code} no está registrado. ¿Lo creas ahora?
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={`Nombre del ${profile.itemSingular}`}
+          aria-label="Nombre"
+          className="col-span-2 px-3 py-2 border border-line rounded-lg text-sm bg-white"
+        />
+        <input
+          inputMode="numeric"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          placeholder="Precio de venta"
+          aria-label="Precio de venta"
+          className="px-3 py-2 border border-line rounded-lg text-sm bg-white"
+        />
+        {business.has_inventory && (
+          <input
+            inputMode="decimal"
+            value={stock}
+            onChange={(e) => setStock(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save()}
+            placeholder="Stock (opcional)"
+            aria-label="Stock actual"
+            className="px-3 py-2 border border-line rounded-lg text-sm bg-white"
+          />
+        )}
+      </div>
+      <div className="text-[11px] text-muted mt-1.5">El costo y la categoría los puedes completar después en "{profile.navLabel}".</div>
+      {err && <div role="alert" className="text-xs text-red-600 mt-1.5">{err}</div>}
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={save}
+          disabled={busy}
+          className="flex items-center gap-1.5 bg-brand-500 text-white text-sm font-semibold px-3 py-1.5 rounded-lg disabled:opacity-60"
+        >
+          {busy && <Loader2 size={13} className="animate-spin" />} Crear y agregar
+        </button>
+        <button onClick={onCancel} className="text-sm text-muted px-2">
+          Cancelar
+        </button>
       </div>
     </div>
   );

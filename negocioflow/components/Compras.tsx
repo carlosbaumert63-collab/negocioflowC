@@ -8,6 +8,7 @@ import ProGate from "./ProGate";
 import OwnerGate from "./OwnerGate";
 import { friendlyDbError } from "../lib/plan";
 import { useEscape } from "../lib/useEscape";
+import { fetchAll } from "../lib/fetchAll";
 
 interface PurchaseRow {
   id: string;
@@ -144,12 +145,9 @@ function NuevaCompraModal({
       .eq("business_id", business.id)
       .order("name")
       .then(({ data }) => setSuppliers((data as Supplier[]) || []));
-    supabase
-      .from("products")
-      .select("*")
-      .eq("business_id", business.id)
-      .order("name")
-      .then(({ data }) => setProducts((data as Product[]) || []));
+    fetchAll<Product>((a, b) =>
+      supabase.from("products").select("*").eq("business_id", business.id).order("name").order("id").range(a, b)
+    ).then(({ data }) => setProducts(data));
   }, [business.id]);
 
   function updateItem(i: number, patch: Partial<ItemRow>) {

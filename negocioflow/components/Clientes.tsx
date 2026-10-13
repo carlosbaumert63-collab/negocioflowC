@@ -9,6 +9,7 @@ import OwnerGate from "./OwnerGate";
 import { usePlan } from "./PlanContext";
 import { friendlyDbError } from "../lib/plan";
 import { useEscape } from "../lib/useEscape";
+import { fetchAll } from "../lib/fetchAll";
 
 interface CustomerStats extends Customer {
   purchaseCount: number;
@@ -43,11 +44,9 @@ function ClientesInner({ business }: { business: Business }) {
 
   async function load() {
     setLoading(true);
-    const { data: custs } = await supabase
-      .from("customers")
-      .select("*")
-      .eq("business_id", business.id)
-      .order("name");
+    const { data: custs } = await fetchAll<Customer>((a, b) =>
+      supabase.from("customers").select("*").eq("business_id", business.id).order("name").order("id").range(a, b)
+    );
 
     // Las estadísticas se calculan en la base de datos (sin tope de filas).
     const { data: stats, error: statsErr } = await supabase.rpc("customer_stats", { p_business_id: business.id });

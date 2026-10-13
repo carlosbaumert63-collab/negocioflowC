@@ -7,6 +7,7 @@ import { fmtCLP, type Business, type Product } from "../lib/types";
 import { friendlyDbError } from "../lib/plan";
 import { parseCLP, parseQty, toInputNumber } from "../lib/numbers";
 import { getProfile, cap } from "../lib/businessProfiles";
+import { fetchAll } from "../lib/fetchAll";
 
 const EMPTY_FORM = {
   name: "",
@@ -21,6 +22,7 @@ const EMPTY_FORM = {
 
 /** Producto con control de stock (los servicios y platos normalmente no). */
 const isTracked = (p: Product) => p.track_stock !== false;
+const PAGE = 150;
 
 export default function Productos({ business }: { business: Business }) {
   const profile = getProfile(business);
@@ -30,6 +32,10 @@ export default function Productos({ business }: { business: Business }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [scanningSku, setScanningSku] = useState(false);
+  const [scanningSearch, setScanningSearch] = useState(false);
+  // Con miles de productos, dibujar toda la lista de una vez hace lenta la
+  // pantalla en celulares: se muestran por tandas.
+  const [shown, setShown] = useState(PAGE);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [originalStock, setOriginalStock] = useState<string>("");
@@ -47,13 +53,11 @@ export default function Productos({ business }: { business: Business }) {
   const [renameBusy, setRenameBusy] = useState(false);
 
   const load = async () => {
-    const { data, error: err } = await supabase
-      .from("products")
-      .select("*")
-      .eq("business_id", business.id)
-      .order("name", { ascending: true });
+    const { data, error: err } = await fetchAll<Product>((a, b) =>
+      supabase.from("products").select("*").eq("business_id", business.id).order("name", { ascending: true }).order("id").range(a, b)
+    );
     if (err) setListError(friendlyDbError(err.message));
-    setProducts((data as Product[]) || []);
+    setProducts(data);
     setLoading(false);
   };
 
@@ -98,6 +102,23 @@ export default function Productos({ business }: { business: Business }) {
     });
   }, [products, query, categoryFilter, onlyLow, lowIds]);
 
+  useEffect(() => setShown(PAGE), [query, categoryFilter, onlyLow]);
+
+  /** Escanear en el buscador: abre el producto con ese código o crea uno nuevo con él. */
+  function handleSearchScan(code: string) {
+    const c = code.trim();
+    const found = products.find((p) => (p.sku || "").trim().toLowerCase() === c.toLowerCase());
+    setScanningSearch(false);
+    if (found) {
+      setQuery("");
+      openEdit(found);
+    } else {
+      setQuery("");
+      openNew(c);
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   // Renombrar una categoría en todos los productos (p. ej. al cambiar de rubro).
   async function renameCategory() {
     if (!renaming || renameBusy) return;
@@ -120,10 +141,10 @@ export default function Productos({ business }: { business: Business }) {
     setRenaming(null);
   }
 
-  function openNew() {
+  function openNew(sku = "") {
     setEditingId(null);
     // Por defecto: un producto de almacén controla stock; un servicio o un plato no.
-    setForm({ ...EMPTY_FORM, track_stock: profile.hasInventory });
+    setForm({ ...EMPTY_FORM, sku, track_stock: profile.hasInventory });
     setOriginalStock("");
     setOriginalTracked(profile.hasInventory);
     setError("");
@@ -381,9 +402,25 @@ export default function Productos({ business }: { business: Business }) {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar por nombre, código o categoría…"
             aria-label={`Buscar ${items}`}
-            className="w-full pl-9 pr-3 py-2 border border-line rounded-lg text-sm"
+            className="w-full pl-9 pr-11 py-2 border border-line rounded-lg text-sm"
           />
+          <button
+            type="button"
+            onClick={() => setScanningSearch(true)}
+            className="absolute right-1 top-1/2 -translate-y-1/2 p-2 rounded-md text-brand-700 hover:bg-surface"
+            aria-label="Escanear un código para buscarlo"
+            title="Escanear: abre el producto o crea uno nuevo con ese código"
+          >
+            <ScanBarcode size={18} />
+          </button>
         </div>
+      )}
+      {scanningSearch && (
+        <BarcodeScanner
+          title="Escanear para buscar o crear"
+          onDetected={(code) => handleSearchScan(code)}
+          onClose={() => setScanningSearch(false)}
+        />
       )}
 
       {(categories.length > 0 || lowStock.length > 0) && (
@@ -484,7 +521,7 @@ export default function Productos({ business }: { business: Business }) {
           {products.length === 0 ? (
             <>
               Aún no tienes {items} registrados.{" "}
-              <button onClick={openNew} className="underline text-ink">
+              <button onClick={() => openNew()} className="underline text-ink">
                 {cap(`agrega tu primer ${item}`)}
               </button>
               .
@@ -495,7 +532,7 @@ export default function Productos({ business }: { business: Business }) {
         </div>
       ) : (
         <div className="bg-white border border-line rounded-xl overflow-hidden">
-          {filtered.map((p) => {
+          {filtered.slice(0, shown).map((p) => {
             const price = Number(p.sale_price);
             const profit = price - Number(p.cost);
             const margin = price > 0 ? (profit / price) * 100 : 0;
@@ -526,6 +563,14 @@ export default function Productos({ business }: { business: Business }) {
             );
           })}
         </div>
+      )}
+      {filtered.length > shown && (
+        <button
+          onClick={() => setShown((n) => n + PAGE)}
+          className="w-full mt-3 py-2.5 text-sm text-muted border border-line rounded-lg bg-white"
+        >
+          Mostrar más ({filtered.length - shown} restantes)
+        </button>
       )}
 
       {showRestock && (

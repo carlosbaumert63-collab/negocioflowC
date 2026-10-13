@@ -40,6 +40,23 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [prices, setPrices] = useState<Record<PlanId, number>>(FALLBACK_PRICES);
+  // Solo se ofrecen los medios de pago configurados (Mercado Pago aún no lo está).
+  const [available, setAvailable] = useState<{ flow: boolean; mp: boolean }>({ flow: true, mp: false });
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/checkout/providers")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!active || !d) return;
+        setAvailable({ flow: !!d.flow, mp: !!d.mp });
+        if (!d.flow && d.mp) setProvider("mp");
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -104,6 +121,7 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
         </ul>
       </div>
 
+      {available.flow && available.mp && (
       <div className="flex gap-1.5 mb-4">
         <button
           onClick={() => setProvider("flow")}
@@ -122,6 +140,12 @@ export default function UpgradePanel({ renewal }: { renewal?: boolean }) {
           Mercado Pago
         </button>
       </div>
+      )}
+      {!(available.flow && available.mp) && (
+        <div className="text-xs text-muted mb-4">
+          Pago seguro con {available.mp && !available.flow ? "Mercado Pago" : "Flow (tarjetas de débito, crédito o transferencia)"}.
+        </div>
+      )}
 
       {error && <div className="text-xs text-red-600 mb-3">{error}</div>}
 

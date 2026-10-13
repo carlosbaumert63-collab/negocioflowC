@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { fmtCLP, type Business, type Sale } from "./types";
 import { monthRange, formatDateCL } from "./dates";
+import { fetchAll as fetchAllPages } from "./fetchAll";
 
 function downloadBlob(filename: string, content: BlobPart, type: string) {
   const blob = new Blob([content], { type });
@@ -39,15 +40,9 @@ function toCSV(rows: (string | number)[][]): string {
 // La API devuelve como máximo 1.000 filas por consulta: se pide por páginas
 // para que la exportación incluya TODO, no solo lo primero.
 async function fetchAll<T>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
-  const PAGE = 1000;
-  const out: T[] = [];
-  for (let from = 0; from < 200000; from += PAGE) {
-    const { data, error } = await build(from, from + PAGE - 1);
-    if (error) throw new Error(error.message || "No se pudieron leer los datos para exportar.");
-    out.push(...(data || []));
-    if (!data || data.length < PAGE) break;
-  }
-  return out;
+  const { data, error } = await fetchAllPages<T>(build);
+  if (error) throw new Error(error.message || "No se pudieron leer los datos para exportar.");
+  return data;
 }
 
 function today(): string {
