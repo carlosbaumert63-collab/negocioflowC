@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, X, Trash2, Pencil, Search } from "lucide-react";
+import { Plus, X, Trash2, Pencil, Search, PackagePlus } from "lucide-react";
+import ReponerModal from "./ReponerModal";
 import { supabase } from "../lib/supabaseClient";
 import { fmtCLP, EXPENSE_CATEGORIES, PAYMENT_METHODS, type Business, type Expense } from "../lib/types";
 import { localISODate, formatDateCL } from "../lib/dates";
@@ -22,8 +23,19 @@ function emptyForm() {
   };
 }
 
+// Reposición de mercadería (se guarda como compra: suma stock y actualiza costo).
+interface Restock {
+  id: string;
+  purchase_date: string;
+  total: number;
+  detail: string;
+}
+
 function GastosInner({ business }: { business: Business }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [restocks, setRestocks] = useState<Restock[]>([]);
+  const [showRestock, setShowRestock] = useState(false);
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -34,15 +46,36 @@ function GastosInner({ business }: { business: Business }) {
   const [listError, setListError] = useState("");
 
   const load = async () => {
-    const { data, error: err } = await supabase
-      .from("expenses")
-      .select("*")
-      .eq("business_id", business.id)
-      .order("expense_date", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(1000);
+    const [{ data, error: err }, { data: purch }] = await Promise.all([
+      supabase
+        .from("expenses")
+        .select("*")
+        .eq("business_id", business.id)
+        .order("expense_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1000),
+      supabase
+        .from("purchases")
+        .select("id, purchase_date, total, purchase_items(quantity, products(name))")
+        .eq("business_id", business.id)
+        .order("purchase_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(300),
+    ]);
     if (err) setListError(friendlyDbError(err.message));
     setExpenses((data as Expense[]) || []);
+    setRestocks(
+      ((purch as any[]) || []).map((p) => {
+        const items = (p.purchase_items || []) as { quantity: number; products: { name: string } | null }[];
+        const names = items.map((i) => `${Number(i.quantity)}× ${i.products?.name || "producto eliminado"}`);
+        return {
+          id: p.id,
+          purchase_date: p.purchase_date,
+          total: Number(p.total),
+          detail: names.slice(0, 3).join(", ") + (names.length > 3 ? ` y ${names.length - 3} más` : ""),
+        };
+      })
+    );
     setLoading(false);
   };
 
@@ -125,18 +158,63 @@ function GastosInner({ business }: { business: Business }) {
 
   const total = filtered.reduce((s, e) => s + Number(e.amount), 0);
 
+  const filteredRestocks = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return restocks;
+    return restocks.filter(
+      (r) => "reposición mercadería".includes(q) || r.detail.toLowerCase().includes(q) || formatDateCL(r.purchase_date).includes(q)
+    );
+  }, [restocks, query]);
+  const restockTotal = filteredRestocks.reduce((s, r) => s + r.total, 0);
+
+  // Gastos y reposiciones en una sola lista, de lo más nuevo a lo más antiguo.
+  type Row = { kind: "gasto"; date: string; e: Expense } | { kind: "repo"; date: string; r: Restock };
+  const rows: Row[] = [
+    ...filtered.map((e) => ({ kind: "gasto" as const, date: e.expense_date, e })),
+    ...filteredRestocks.map((r) => ({ kind: "repo" as const, date: r.purchase_date, r })),
+  ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between gap-2 mb-5 flex-wrap">
         <h1 className="text-xl font-bold">Gastos</h1>
-        <button
-          onClick={() => (showForm ? setShowForm(false) : openNew())}
-          className="flex items-center gap-1.5 bg-brand-500 text-white text-sm font-semibold px-4 py-2 rounded-lg"
-        >
-          {showForm ? <X size={16} /> : <Plus size={16} />}
-          {showForm ? "Cerrar" : "Nuevo gasto"}
-        </button>
+        <div className="flex items-center gap-2">
+          {business.has_inventory && (
+            <button
+              onClick={() => {
+                setNotice("");
+                setShowRestock(true);
+              }}
+              className="flex items-center gap-1.5 border border-line bg-white text-sm font-semibold px-3.5 py-2 rounded-lg"
+            >
+              <PackagePlus size={16} /> Reponer mercadería
+            </button>
+          )}
+          <button
+            onClick={() => (showForm ? setShowForm(false) : openNew())}
+            className="flex items-center gap-1.5 bg-brand-500 text-white text-sm font-semibold px-4 py-2 rounded-lg"
+          >
+            {showForm ? <X size={16} /> : <Plus size={16} />}
+            {showForm ? "Cerrar" : "Nuevo gasto"}
+          </button>
+        </div>
       </div>
+      {notice && (
+        <div role="status" className="text-sm bg-brand-50 text-brand-700 border border-brand-100 rounded-lg px-3 py-2 mb-4">
+          {notice}
+        </div>
+      )}
+      {showRestock && (
+        <ReponerModal
+          business={business}
+          onClose={() => setShowRestock(false)}
+          onSaved={(t) => {
+            setShowRestock(false);
+            setNotice(`Reposición de ${fmtCLP(t)} registrada. El stock ya se actualizó.`);
+            load();
+          }}
+        />
+      )}
 
       {showForm && (
         <div className="bg-white border border-line rounded-xl p-5 mb-6">
@@ -179,7 +257,7 @@ function GastosInner({ business }: { business: Business }) {
         </div>
       )}
 
-      {expenses.length > 0 && (
+      {(expenses.length > 0 || restocks.length > 0) && (
         <div className="relative mb-4">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input
@@ -195,17 +273,41 @@ function GastosInner({ business }: { business: Business }) {
 
       {loading ? (
         <div className="text-sm text-muted py-8 text-center">Cargando…</div>
-      ) : filtered.length === 0 ? (
+      ) : rows.length === 0 ? (
         <div className="text-sm text-muted py-8 text-center">
-          {expenses.length === 0 ? "Aún no tienes gastos registrados." : "Sin resultados para esa búsqueda."}
+          {expenses.length === 0 && restocks.length === 0 ? "Aún no tienes gastos registrados." : "Sin resultados para esa búsqueda."}
         </div>
       ) : (
         <>
-          <div className="text-sm text-muted mb-3">
-            {query ? "Total de los resultados" : "Total"}: <strong className="text-ink">{fmtCLP(total)}</strong>
+          <div className="text-sm text-muted mb-3 flex flex-wrap gap-x-4 gap-y-1">
+            <span>
+              {query ? "Gastos (resultados)" : "Gastos"}: <strong className="text-ink">{fmtCLP(total)}</strong>
+            </span>
+            {restocks.length > 0 && (
+              <span title="El costo de la mercadería se resta de tu ganancia cuando la vendes, no al comprarla.">
+                Reposición de mercadería: <strong className="text-ink">{fmtCLP(restockTotal)}</strong>
+              </span>
+            )}
           </div>
           <div className="bg-white border border-line rounded-xl overflow-hidden">
-            {filtered.map((e) => (
+            {rows.map((row) =>
+              row.kind === "repo" ? (
+                <div key={"r" + row.r.id} className="flex items-center justify-between px-4 py-3 border-b border-line last:border-0">
+                  <div className="min-w-0">
+                    <div className="font-medium text-sm truncate flex items-center gap-1.5">
+                      <PackagePlus size={14} className="text-brand-600 flex-shrink-0" />
+                      Reposición de mercadería
+                    </div>
+                    <div className="text-xs text-muted mt-0.5 truncate">
+                      {formatDateCL(row.r.purchase_date)} · {row.r.detail}
+                    </div>
+                  </div>
+                  <div className="text-sm font-semibold flex-shrink-0">{fmtCLP(row.r.total)}</div>
+                </div>
+              ) : (
+                (() => {
+                  const e = row.e;
+                  return (
               <div key={e.id} className="flex items-center justify-between px-4 py-3 border-b border-line last:border-0">
                 <div className="min-w-0">
                   <div className="font-medium text-sm truncate">
@@ -226,7 +328,10 @@ function GastosInner({ business }: { business: Business }) {
                   </button>
                 </div>
               </div>
-            ))}
+                  );
+                })()
+              )
+            )}
           </div>
         </>
       )}
