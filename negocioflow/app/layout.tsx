@@ -1,5 +1,6 @@
 import "./globals.css";
 import InstallBanner from "../components/InstallBanner";
+import { Analytics } from "@vercel/analytics/react";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://negocioflow.vercel.app";
 
@@ -76,6 +77,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON_LD }} />
         {children}
         <InstallBanner />
+        {/* Visitas de la página (se ven en Vercel → Analytics). Sin cookies. */}
+        <Analytics />
         <script
           dangerouslySetInnerHTML={{
             __html: `
