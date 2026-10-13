@@ -24,7 +24,10 @@ import {
   UtensilsCrossed,
   Briefcase,
   Wrench,
+  HelpCircle,
 } from "lucide-react";
+import Tutorial, { type TutorialTarget } from "./Tutorial";
+import { safeStorage } from "../lib/safeStorage";
 import { getProfile } from "../lib/businessProfiles";
 import { supabase } from "../lib/supabaseClient";
 import type { Business, BusinessRole } from "../lib/types";
@@ -130,6 +133,16 @@ function AppShellInner({
   const [showMore, setShowMore] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [paymentNotice, setPaymentNotice] = useState<PaymentNotice>(null);
+  // Tutorial: se abre solo la primera vez que se entra a cada negocio.
+  const [showTutorial, setShowTutorial] = useState(false);
+  const tutorialKey = `nf_tutorial_seen_${business.id}`;
+  useEffect(() => {
+    if (!safeStorage.get(tutorialKey)) setShowTutorial(true);
+  }, [tutorialKey]);
+  function closeTutorial() {
+    safeStorage.set(tutorialKey, "1");
+    setShowTutorial(false);
+  }
   // La sección de productos toma el nombre del rubro: "Servicios", "Carta"…
   const profile = getProfile(business);
   const itemsIcon =
@@ -321,6 +334,12 @@ function AppShellInner({
         </div>
         <div className="mt-auto">
           <button
+            onClick={() => setShowTutorial(true)}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-muted hover:text-ink"
+          >
+            <HelpCircle size={16} /> Tutorial
+          </button>
+          <button
             onClick={() => supabase.auth.signOut()}
             className="flex items-center gap-2 px-3 py-2 text-sm text-muted"
           >
@@ -354,7 +373,10 @@ function AppShellInner({
                 {planLabel}
               </button>
             )}
-            <button onClick={() => supabase.auth.signOut()} className="text-muted">
+            <button onClick={() => setShowTutorial(true)} className="text-muted" aria-label="Ver tutorial">
+              <HelpCircle size={19} />
+            </button>
+            <button onClick={() => supabase.auth.signOut()} className="text-muted" aria-label="Cerrar sesión">
               <LogOut size={18} />
             </button>
           </div>
@@ -405,6 +427,15 @@ function AppShellInner({
             </motion.div>
           )}
         </AnimatePresence>
+
+        {showTutorial && (
+          <Tutorial
+            business={business}
+            isOwner={isOwner}
+            onClose={closeTutorial}
+            onGo={(t: TutorialTarget) => setTab(t)}
+          />
+        )}
 
         {paymentNotice && (
           <div
