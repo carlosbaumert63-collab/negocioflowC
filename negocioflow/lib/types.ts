@@ -93,6 +93,8 @@ export interface Sale {
   sale_items?: SaleItem[];
   is_demo?: boolean;
   pending_payment?: boolean;
+  boleta_sii_at?: string | null;
+  boleta_folio?: string | null;
 }
 
 export interface Expense {

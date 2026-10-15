@@ -9,15 +9,14 @@ import { localISODate, formatDateCL } from "../lib/dates";
 import { parseCLP, parseQty } from "../lib/numbers";
 import { friendlyDbError } from "../lib/plan";
 import { exportSaleReceiptPDF } from "../lib/export";
-import { usePlan } from "./PlanContext";
 import { fetchAll } from "../lib/fetchAll";
 import { lookupBarcode } from "../lib/catalog";
+import BoletaSii from "./BoletaSii";
 
 const PAGE_SIZE = 50;
 
 export default function Ventas({ business }: { business: Business }) {
   const profile = getProfile(business);
-  const { isPro, isOwner } = usePlan();
   const [sales, setSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -29,33 +28,9 @@ export default function Ventas({ business }: { business: Business }) {
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [listError, setListError] = useState("");
-  const [dteBusyId, setDteBusyId] = useState<string | null>(null);
-  const [dteMessage, setDteMessage] = useState<{ saleId: string; text: string; ok: boolean } | null>(null);
   const [savedMsg, setSavedMsg] = useState("");
-
-  async function handleEmitDte(sale: Sale) {
-    setDteBusyId(sale.id);
-    setDteMessage(null);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const res = await fetch("/api/dte/emit", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token || ""}`,
-        },
-        body: JSON.stringify({ saleId: sale.id, businessId: business.id }),
-      });
-      const data = await res.json();
-      setDteMessage({ saleId: sale.id, text: res.ok ? data.warning || "Boleta emitida." : data.error, ok: res.ok && !data.warning });
-    } catch (err: any) {
-      setDteMessage({ saleId: sale.id, text: friendlyDbError(err.message), ok: false });
-    } finally {
-      setDteBusyId(null);
-    }
-  }
+  const [boletaSale, setBoletaSale] = useState<Sale | null>(null);
+  const [lastSaleId, setLastSaleId] = useState<string | null>(null);
 
   function salesQuery(from: number) {
     return supabase
@@ -84,6 +59,7 @@ export default function Ventas({ business }: { business: Business }) {
     setProducts(productsRes.data);
     setCustomers(customersRes.data);
     setLoading(false);
+    return list;
   };
 
   async function loadMore() {
@@ -172,6 +148,15 @@ export default function Ventas({ business }: { business: Business }) {
       {savedMsg && (
         <div role="status" className="flex items-center justify-between gap-2 text-sm bg-brand-50 text-brand-700 border border-brand-100 rounded-lg px-3 py-2 mb-3">
           <span>{savedMsg}</span>
+          <span className="flex items-center gap-3 flex-shrink-0">
+          {lastSaleId && sales.some((x) => x.id === lastSaleId) && (
+            <button
+              onClick={() => setBoletaSale(sales.find((x) => x.id === lastSaleId) || null)}
+              className="font-semibold underline"
+            >
+              Boleta SII
+            </button>
+          )}
           <button
             onClick={() => {
               setSavedMsg("");
@@ -182,6 +167,7 @@ export default function Ventas({ business }: { business: Business }) {
           >
             Otra venta
           </button>
+          </span>
         </div>
       )}
 
@@ -204,6 +190,9 @@ export default function Ventas({ business }: { business: Business }) {
                     <span className="text-muted capitalize"> · {s.payment_method}</span>
                     {s.pending_payment && <span className="text-amber-700 text-xs font-medium"> · FIADO</span>}
                     {s.is_demo && <span className="text-violet-600 text-xs font-medium"> · DEMO</span>}
+                    {s.boleta_sii_at && (
+                      <span className="text-brand-700 text-xs font-medium"> · BOLETA{s.boleta_folio ? ` N° ${s.boleta_folio}` : ""}</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
                     <div className="text-xs text-brand-600 font-medium">+{fmtCLP(s.profit)}</div>
@@ -236,28 +225,20 @@ export default function Ventas({ business }: { business: Business }) {
                     >
                       <FileDown size={14} />
                     </button>
-                    {isPro && isOwner && (
-                      <button
-                        onClick={() => handleEmitDte(s)}
-                        disabled={dteBusyId === s.id}
-                        className="text-muted hover:text-ink"
-                        title="Emitir boleta electrónica"
-                        aria-label="Emitir boleta electrónica"
-                      >
-                        {dteBusyId === s.id ? <Loader2 size={14} className="animate-spin" /> : <Receipt size={14} />}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setBoletaSale(s)}
+                      className={s.boleta_sii_at ? "text-brand-600" : "text-muted hover:text-ink"}
+                      title={s.boleta_sii_at ? "Boleta emitida en el SII" : "Emitir boleta en el SII (gratis)"}
+                      aria-label="Boleta en el SII"
+                    >
+                      <Receipt size={14} />
+                    </button>
                   </div>
                 </div>
                 <div className="text-xs text-muted mt-1 truncate">
                   {cName && <span className="text-ink">{cName} · </span>}
                   {(s.sale_items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}
                 </div>
-                {dteMessage && dteMessage.saleId === s.id && (
-                  <div className={`text-xs mt-1 ${dteMessage.ok ? "text-brand-600" : "text-amber-700"}`}>
-                    {dteMessage.text}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -274,6 +255,17 @@ export default function Ventas({ business }: { business: Business }) {
         </button>
       )}
 
+      {boletaSale && (
+        <BoletaSii
+          sale={boletaSale}
+          onClose={() => setBoletaSale(null)}
+          onSaved={(upd) => {
+            setSales((prev) => prev.map((x) => (x.id === upd.id ? { ...x, ...upd } : x)));
+            setBoletaSale(null);
+          }}
+        />
+      )}
+
       {showModal && (
         <NuevaVentaModal
           business={business}
@@ -282,10 +274,13 @@ export default function Ventas({ business }: { business: Business }) {
           existingSale={editingSale}
           onClose={() => setShowModal(false)}
           onProductCreated={(p) => setProducts((prev) => [...prev, p].sort((a, b) => a.name.localeCompare(b.name, "es")))}
-          onSaved={(msg) => {
+          onSaved={async (msg) => {
+            const wasEditing = !!editingSale;
             setShowModal(false);
             setSavedMsg(msg);
-            load();
+            setLastSaleId(null);
+            const list = await load();
+            if (!wasEditing && list[0]) setLastSaleId(list[0].id);
           }}
         />
       )}
