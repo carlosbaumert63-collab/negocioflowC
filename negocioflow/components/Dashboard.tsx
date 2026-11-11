@@ -13,6 +13,7 @@ import {
   Check,
   Share2,
   RefreshCw,
+  ChevronRight,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { supabase } from "../lib/supabaseClient";
@@ -25,6 +26,7 @@ import { parseCLP } from "../lib/numbers";
 import { getProfile, type BusinessProfile } from "../lib/businessProfiles";
 import BusinessTypePicker, { type BusinessTypeValue } from "./BusinessTypePicker";
 import { useEscape } from "../lib/useEscape";
+import { fetchInventoryInsights, type InventoryInsights, type ProductFilter } from "../lib/insights";
 
 // Lo que devuelve la función dashboard_summary de la base de datos. Todo se
 // suma en SQL, así que no hay tope de filas ni diferencias de zona horaria.
@@ -69,11 +71,16 @@ function compactCLP(n: number): string {
 export default function Dashboard({
   business,
   onBusinessUpdated,
+  onOpenProducts,
 }: {
   business: Business;
   onBusinessUpdated?: (b: Business) => void;
+  /** Abre la lista de productos con un filtro puesto. */
+  onOpenProducts?: (filter: ProductFilter) => void;
 }) {
   const { isPro, isOwner, goToPlan } = usePlan();
+  // Avisos "para revisar": productos sin ganancia y mercadería sin movimiento.
+  const [insights, setInsights] = useState<InventoryInsights | null>(null);
   const profile = getProfile(business);
   const [showTypeModal, setShowTypeModal] = useState(false);
   // Tras cambiar de rubro con la demo cargada, se ofrece cambiarla al nuevo rubro.
@@ -92,6 +99,8 @@ export default function Dashboard({
 
   const load = useCallback(async () => {
     setLoadError("");
+    // Avisos secundarios: si fallan, el resumen se muestra igual.
+    if (isOwner) fetchInventoryInsights(business.id, localISODate()).then(setInsights);
     const { data, error } = await supabase.rpc("dashboard_summary", {
       p_business_id: business.id,
       p_today: localISODate(),
@@ -133,7 +142,7 @@ export default function Dashboard({
         : null,
       daily: (raw.daily || []).map((d: any) => ({ date: d.date, sales: num(d.sales), count: num(d.count) })),
     });
-  }, [business.id]);
+  }, [business.id, isOwner]);
 
   async function checkDemoState() {
     const [{ count: realCount }, demo] = await Promise.all([
@@ -233,11 +242,13 @@ export default function Dashboard({
       {s.out_of_stock > 0 && (
         <Alert
           text={s.out_of_stock === 1 ? "1 producto está agotado." : `${s.out_of_stock} productos están agotados.`}
+          onClick={onOpenProducts && (() => onOpenProducts("low"))}
         />
       )}
       {s.low_stock > 0 && (
         <Alert
           text={s.low_stock === 1 ? "1 producto tiene stock bajo." : `${s.low_stock} productos tienen stock bajo.`}
+          onClick={onOpenProducts && (() => onOpenProducts("low"))}
         />
       )}
     </>
@@ -416,6 +427,37 @@ export default function Dashboard({
             Tienes productos con stock bajo o agotado. Las alertas detalladas son una función Pro.
           </button>
         )
+      )}
+
+      {/* para revisar: plata que se pierde sin que se note (todos los planes) */}
+      {insights && (insights.no_margin_count > 0 || (business.has_inventory && insights.idle_count > 0)) && (
+        <div className="mb-6">
+          <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Para revisar</div>
+          <div className="space-y-2">
+            {insights.no_margin_count > 0 && (
+              <Alert
+                danger
+                text={
+                  insights.no_margin_count === 1
+                    ? `${insights.no_margin[0]?.name || "1 producto"} se vende al costo o más barato: no te deja ganancia.`
+                    : `${insights.no_margin_count} ${profile.itemPlural} se venden al costo o más barato: no te dejan ganancia.`
+                }
+                onClick={onOpenProducts && (() => onOpenProducts("no_margin"))}
+              />
+            )}
+            {business.has_inventory && insights.idle_count > 0 && (
+              <Alert
+                text={
+                  (insights.idle_count === 1
+                    ? `${insights.idle[0]?.name || "1 producto"} tiene stock y no se vende hace ${insights.idle_days} días.`
+                    : `${insights.idle_count} productos con stock no se venden hace ${insights.idle_days} días.`) +
+                  (insights.idle_value > 0 ? ` Son ${fmtCLP(insights.idle_value)} en mercadería detenida.` : "")
+                }
+                onClick={onOpenProducts && (() => onOpenProducts("idle"))}
+              />
+            )}
+          </div>
+        </div>
       )}
 
       {/* hoy */}
@@ -827,15 +869,37 @@ function BusinessTypeModal({
   );
 }
 
-function Alert({ text, positive }: { text: string; positive?: boolean }) {
-  return (
-    <div
-      className={`flex items-center gap-2 text-sm px-3 py-2.5 rounded-lg border ${
-        positive ? "bg-brand-50 border-brand-100 text-brand-700" : "bg-amber-50 border-amber-100 text-amber-700"
-      }`}
-    >
+function Alert({
+  text,
+  positive,
+  danger,
+  onClick,
+}: {
+  text: string;
+  positive?: boolean;
+  danger?: boolean;
+  /** Si viene, el aviso es un botón que lleva a donde se arregla. */
+  onClick?: (() => void) | false;
+}) {
+  const tone = positive
+    ? "bg-brand-50 border-brand-100 text-brand-700"
+    : danger
+    ? "bg-red-50 border-red-100 text-red-700"
+    : "bg-amber-50 border-amber-100 text-amber-700";
+  const cls = `flex items-center gap-2 text-sm px-3 py-2.5 rounded-lg border ${tone}`;
+  const body = (
+    <>
       {!positive && <AlertTriangle size={15} className="flex-shrink-0" />}
-      {text}
-    </div>
+      <span className="flex-1 min-w-0">{text}</span>
+    </>
   );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={`${cls} w-full text-left hover:brightness-95`}>
+        {body}
+        <ChevronRight size={16} className="flex-shrink-0 opacity-70" />
+      </button>
+    );
+  }
+  return <div className={cls}>{body}</div>;
 }

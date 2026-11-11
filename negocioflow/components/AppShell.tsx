@@ -44,6 +44,7 @@ import Compras from "./Compras";
 import FlujoCaja from "./FlujoCaja";
 import CajaDiaria from "./CajaDiaria";
 import Equipo from "./Equipo";
+import type { ProductFilter } from "../lib/insights";
 
 type Tab =
   | "dashboard"
@@ -130,6 +131,8 @@ function AppShellInner({
   const subKey = `${subscription?.plan || ""}|${subscription?.expires_at || ""}`;
   const [baselineSubKey] = useState(subKey);
   const [tab, setTab] = useState<Tab>("dashboard");
+  // Filtro con el que se abre Productos al llegar desde un aviso del Dashboard.
+  const [productFilter, setProductFilter] = useState<ProductFilter | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [paymentNotice, setPaymentNotice] = useState<PaymentNotice>(null);
@@ -209,11 +212,22 @@ function AppShellInner({
   function renderTab() {
     switch (tab) {
       case "dashboard":
-        return <Dashboard business={business} onBusinessUpdated={onBusinessUpdated} />;
+        return (
+          <Dashboard
+            business={business}
+            onBusinessUpdated={onBusinessUpdated}
+            onOpenProducts={(filter) => {
+              setProductFilter(filter);
+              setTab("productos");
+            }}
+          />
+        );
       case "ventas":
         return <Ventas business={business} />;
       case "productos":
-        return <Productos business={business} />;
+        return (
+          <Productos business={business} initialFilter={productFilter} onFilterConsumed={() => setProductFilter(null)} />
+        );
       case "gastos":
         return <Gastos business={business} />;
       case "reportes":

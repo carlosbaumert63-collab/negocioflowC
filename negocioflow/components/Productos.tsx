@@ -9,6 +9,8 @@ import { parseCLP, parseQty, toInputNumber } from "../lib/numbers";
 import { getProfile, cap } from "../lib/businessProfiles";
 import { fetchAll } from "../lib/fetchAll";
 import { lookupBarcode } from "../lib/catalog";
+import { localISODate } from "../lib/dates";
+import { fetchInventoryInsights, type ProductFilter } from "../lib/insights";
 
 const EMPTY_FORM = {
   name: "",
@@ -25,7 +27,16 @@ const EMPTY_FORM = {
 const isTracked = (p: Product) => p.track_stock !== false;
 const PAGE = 150;
 
-export default function Productos({ business }: { business: Business }) {
+export default function Productos({
+  business,
+  initialFilter,
+  onFilterConsumed,
+}: {
+  business: Business;
+  /** Filtro con el que abrir la lista (al llegar desde un aviso del Dashboard). */
+  initialFilter?: ProductFilter | null;
+  onFilterConsumed?: () => void;
+}) {
   const profile = getProfile(business);
   const item = profile.itemSingular; // "producto" | "servicio"
   const items = profile.itemPlural;
@@ -59,7 +70,12 @@ export default function Productos({ business }: { business: Business }) {
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [onlyLow, setOnlyLow] = useState(false);
+  // Filtro especial (se combina con la búsqueda y la categoría).
+  const [special, setSpecial] = useState<ProductFilter | null>(initialFilter || null);
+  const onlyLow = special === "low";
+  // Productos con stock que no se venden hace tiempo (lo calcula la base de datos).
+  const [idleIds, setIdleIds] = useState<Set<string>>(new Set());
+  const [idleDays, setIdleDays] = useState(30);
   const [form, setForm] = useState(EMPTY_FORM);
   // Valor actual del formulario para las búsquedas asíncronas.
   const formRef = useRef(form);
@@ -84,6 +100,32 @@ export default function Productos({ business }: { business: Business }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business.id]);
 
+  useEffect(() => {
+    let alive = true;
+    if (!tracksStock) {
+      setIdleIds(new Set());
+      return;
+    }
+    fetchInventoryInsights(business.id, localISODate()).then((ins) => {
+      if (!alive || !ins) return;
+      setIdleIds(new Set(ins.idle_ids));
+      setIdleDays(ins.idle_days);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [business.id, tracksStock]);
+
+  // El filtro que viene del Dashboard se aplica una sola vez.
+  useEffect(() => {
+    if (!initialFilter) return;
+    setSpecial(initialFilter);
+    setCategoryFilter("");
+    setQuery("");
+    onFilterConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFilter]);
+
   const categories = useMemo(() => {
     const set = new Set<string>();
     products.forEach((p) => p.category && set.add(p.category));
@@ -105,6 +147,18 @@ export default function Productos({ business }: { business: Business }) {
     [products, tracksStock]
   );
   const lowIds = useMemo(() => new Set(lowStock.map((p) => p.id)), [lowStock]);
+  // Se venden al costo o bajo el costo: cada venta no deja nada (o hace perder).
+  const noMargin = useMemo(
+    () => products.filter((p) => Number(p.cost) > 0 && Number(p.sale_price) <= Number(p.cost)),
+    [products]
+  );
+  const noMarginIds = useMemo(() => new Set(noMargin.map((p) => p.id)), [noMargin]);
+  const idle = useMemo(
+    () => (tracksStock ? products.filter((p) => idleIds.has(p.id) && isTracked(p) && Number(p.stock) > 0) : []),
+    [products, idleIds, tracksStock]
+  );
+  const idleShownIds = useMemo(() => new Set(idle.map((p) => p.id)), [idle]);
+  const idleValue = useMemo(() => idle.reduce((sum, p) => sum + Number(p.stock) * Number(p.cost || 0), 0), [idle]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -115,12 +169,16 @@ export default function Productos({ business }: { business: Business }) {
         (p.sku || "").toLowerCase().includes(q) ||
         (p.category || "").toLowerCase().includes(q);
       const matchesCategory = !categoryFilter || p.category === categoryFilter;
-      const matchesLow = !onlyLow || lowIds.has(p.id);
-      return matchesQuery && matchesCategory && matchesLow;
+      const matchesSpecial =
+        !special ||
+        (special === "low" && lowIds.has(p.id)) ||
+        (special === "no_margin" && noMarginIds.has(p.id)) ||
+        (special === "idle" && idleShownIds.has(p.id));
+      return matchesQuery && matchesCategory && matchesSpecial;
     });
-  }, [products, query, categoryFilter, onlyLow, lowIds]);
+  }, [products, query, categoryFilter, special, lowIds, noMarginIds, idleShownIds]);
 
-  useEffect(() => setShown(PAGE), [query, categoryFilter, onlyLow]);
+  useEffect(() => setShown(PAGE), [query, categoryFilter, special]);
 
   /** Escanear en el buscador: abre el producto con ese código o crea uno nuevo con él. */
   function handleSearchScan(code: string) {
@@ -402,9 +460,25 @@ export default function Productos({ business }: { business: Business }) {
             const c = parseCLP(form.cost) ?? 0;
             if (sp && sp > 0) {
               const m = ((sp - c) / sp) * 100;
+              const unit = item === "servicio" ? "servicio" : "unidad";
+              if (c > 0 && sp < c) {
+                return (
+                  <div role="alert" className="text-xs mt-3 rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 py-2">
+                    <strong>Ojo: lo vendes más barato de lo que te cuesta.</strong> Pierdes {fmtCLP(c - sp)} por {unit}. Revisa el
+                    precio o el costo antes de guardar.
+                  </div>
+                );
+              }
+              if (c > 0 && sp === c) {
+                return (
+                  <div className="text-xs mt-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2">
+                    Lo vendes al mismo precio que te cuesta: no te deja ganancia.
+                  </div>
+                );
+              }
               return (
-                <div className={`text-xs mt-3 ${m < 0 ? "text-red-600" : "text-muted"}`}>
-                  Ganas {fmtCLP(sp - c)} por {item === "servicio" ? "servicio" : "unidad"} (margen {m.toFixed(0)}%).
+                <div className="text-xs mt-3 text-muted">
+                  Ganas {fmtCLP(sp - c)} por {unit} (margen {m.toFixed(0)}%).
                 </div>
               );
             }
@@ -451,28 +525,50 @@ export default function Productos({ business }: { business: Business }) {
         />
       )}
 
-      {(categories.length > 0 || lowStock.length > 0) && (
+      {(categories.length > 0 || lowStock.length > 0 || noMargin.length > 0 || idle.length > 0) && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <button
             onClick={() => {
               setCategoryFilter("");
-              setOnlyLow(false);
+              setSpecial(null);
             }}
             className={`text-xs px-3 py-1.5 rounded-full border ${
-              !categoryFilter && !onlyLow ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-muted"
+              !categoryFilter && !special ? "border-brand-500 bg-brand-50 text-brand-700" : "border-line text-muted"
             }`}
           >
             Todos
           </button>
           {lowStock.length > 0 && (
             <button
-              onClick={() => setOnlyLow((v) => !v)}
+              onClick={() => setSpecial((v) => (v === "low" ? null : "low"))}
               aria-pressed={onlyLow}
               className={`text-xs px-3 py-1.5 rounded-full border ${
                 onlyLow ? "border-amber-500 bg-amber-50 text-amber-700" : "border-line text-muted"
               }`}
             >
               Por reponer ({lowStock.length})
+            </button>
+          )}
+          {noMargin.length > 0 && (
+            <button
+              onClick={() => setSpecial((v) => (v === "no_margin" ? null : "no_margin"))}
+              aria-pressed={special === "no_margin"}
+              className={`text-xs px-3 py-1.5 rounded-full border ${
+                special === "no_margin" ? "border-red-500 bg-red-50 text-red-700" : "border-line text-muted"
+              }`}
+            >
+              Sin ganancia ({noMargin.length})
+            </button>
+          )}
+          {idle.length > 0 && (
+            <button
+              onClick={() => setSpecial((v) => (v === "idle" ? null : "idle"))}
+              aria-pressed={special === "idle"}
+              className={`text-xs px-3 py-1.5 rounded-full border ${
+                special === "idle" ? "border-amber-500 bg-amber-50 text-amber-700" : "border-line text-muted"
+              }`}
+            >
+              Sin ventas {idleDays} días ({idle.length})
             </button>
           )}
           {categories.map((c) => (
@@ -493,6 +589,19 @@ export default function Productos({ business }: { business: Business }) {
         </div>
       )}
 
+      {special === "no_margin" && noMargin.length > 0 && (
+        <div className="mb-4 text-xs rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 py-2">
+          Estos productos se venden al costo o más barato: cada venta no te deja nada o te hace perder plata. Toca el lápiz
+          para corregir el precio o el costo.
+        </div>
+      )}
+      {special === "idle" && idle.length > 0 && (
+        <div className="mb-4 text-xs rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2">
+          Tienes stock de estos productos, pero no se han vendido en {idleDays} días.
+          {idleValue > 0 && <> Son {fmtCLP(idleValue)} en mercadería detenida.</>} Sirve una oferta, moverlos a la vista o no
+          volver a comprarlos.
+        </div>
+      )}
       {categoryFilter && (
         <div className="flex items-center gap-2 mb-4 text-xs text-muted flex-wrap">
           {renaming === categoryFilter ? (
@@ -573,8 +682,11 @@ export default function Productos({ business }: { business: Business }) {
                   </div>
                   <div className="text-xs text-muted mt-0.5">
                     {fmtCLP(price)} · costo {fmtCLP(p.cost)} ·{" "}
-                    <span className={margin < 0 ? "text-red-600" : ""}>margen {margin.toFixed(0)}%</span>
+                    <span className={noMarginIds.has(p.id) ? "text-red-600 font-medium" : ""}>
+                      {noMarginIds.has(p.id) && profit < 0 ? `pierdes ${fmtCLP(-profit)}` : `margen ${margin.toFixed(0)}%`}
+                    </span>
                     {tracksStock && isTracked(p) && <> · stock {Number(p.stock)}</>}
+                    {idleShownIds.has(p.id) && <span className="text-amber-700"> · sin ventas hace {idleDays}+ días</span>}
                     {p.category && <> · {p.category}</>}
                   </div>
                 </div>
